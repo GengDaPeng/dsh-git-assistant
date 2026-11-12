@@ -95,8 +95,9 @@ window.__ModuleLoader__.load({
         moreCommitActions: '更多提交方式',
         moreLines: '已显示 {shown} / {total} 行，继续滚动加载',
         selectCommit: '选择提交', unpushedCommits: '未推送的提交', noUnpushedCommits: '当前分支没有未推送的提交',
-        wrapLines: '换行', collapseAllFiles: '全部折叠', workspaceChanges: '工作区更改', commitChanges: '本次提交的更改',
+        wrapLines: '换行', collapseAllFiles: '全部折叠', expandAllFiles: '全部展开', workspaceChanges: '工作区更改', commitChanges: '本次提交的更改',
         diffHunkCollapsed: '这个 hunk 有 {count} 行，点击展开',
+        unchangedLines: '{count} 行未变更，点击展开',
         dirtyCount: '{count} 个文件有改动',
       },
       en: {
@@ -171,8 +172,9 @@ window.__ModuleLoader__.load({
         moreCommitActions: 'More commit actions',
         moreLines: 'Showing {shown} / {total} lines — scroll to load more',
         selectCommit: 'Select commit', unpushedCommits: 'Unpushed commits', noUnpushedCommits: 'No unpushed commits on this branch',
-        wrapLines: 'Wrap lines', collapseAllFiles: 'Collapse all', workspaceChanges: 'Working tree changes', commitChanges: 'Changes in this commit',
+        wrapLines: 'Wrap lines', collapseAllFiles: 'Collapse all', expandAllFiles: 'Expand all', workspaceChanges: 'Working tree changes', commitChanges: 'Changes in this commit',
         diffHunkCollapsed: 'This hunk has {count} lines — click to expand',
+        unchangedLines: '{count} unchanged lines — click to expand',
         dirtyCount: '{count} changed files',
       },
     }
@@ -403,12 +405,40 @@ window.__ModuleLoader__.load({
 
     /* ── diff row building ──────────────────────────────────────────── */
 
+    function hunkLabel(hunk) {
+      const match = /^(@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@)/.exec(hunk.header ?? '')
+      return match ? match[1] : (hunk.header ?? '')
+    }
+
+    function hunkCounts(hunk) {
+      let oldCount = 0
+      let newCount = 0
+      for (const line of hunk.lines ?? []) {
+        if (line.kind === 'del') oldCount += 1
+        else if (line.kind === 'add') newCount += 1
+        else { oldCount += 1; newCount += 1 }
+      }
+      return { oldCount, newCount }
+    }
+
+    function gapRowBetween(previous, next, index) {
+      if (!previous) return null
+      const counts = hunkCounts(previous)
+      const previousOldEnd = (previous.oldStart ?? 0) + counts.oldCount - 1
+      const previousNewEnd = (previous.newStart ?? 0) + counts.newCount - 1
+      const nextStart = next.newStart ?? 0
+      const count = nextStart - previousNewEnd - 1
+      if (count <= 0) return null
+      return { kind: 'gap', key: `g:${index}`, count, newStart: previousNewEnd + 1, delta: previousOldEnd - previousNewEnd }
+    }
+
     function unifiedRows(hunks, language, highlight) {
       const rows = []
       let budget = MAX_DIFF_LINES
       hunks.forEach((hunk, hunkIndex) => {
         if (budget <= 0) return
-        rows.push({ kind: 'hunk', key: `h:${hunkIndex}`, hunkIndex, label: `${hunk.header}${hunk.section ? `  ${hunk.section}` : ''}` })
+        const gap = gapRowBetween(hunks[hunkIndex - 1], hunk, hunkIndex)
+        if (gap) rows.push(gap)
         let oldNumber = hunk.oldStart
         let newNumber = hunk.newStart
         hunk.lines.forEach((line, lineIndex) => {
@@ -436,7 +466,8 @@ window.__ModuleLoader__.load({
       let budget = MAX_DIFF_LINES
       hunks.forEach((hunk, hunkIndex) => {
         if (budget <= 0) return
-        rows.push({ kind: 'hunk', key: `h:${hunkIndex}`, hunkIndex, label: `${hunk.header}${hunk.section ? `  ${hunk.section}` : ''}` })
+        const gap = gapRowBetween(hunks[hunkIndex - 1], hunk, hunkIndex)
+        if (gap) rows.push(gap)
         let oldNumber = hunk.oldStart
         let newNumber = hunk.newStart
         let index = 0
@@ -842,7 +873,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Multi-file diff for one commit: file cards with collapse, wrap and per-file diff. */
-    function CommitFilesView({ state, view, wrap, t, collapseSignal }) {
+    function CommitFilesView({ state, view, wrap, t, collapseMode, context }) {
       const [collapsed, setCollapsed] = useState(() => new Set())
       const files = state.data?.files ?? []
       useEffect(() => {
@@ -852,8 +883,9 @@ window.__ModuleLoader__.load({
           .map(file => file.path)))
       }, [state.data])
       useEffect(() => {
-        if (collapseSignal > 0 && files.length) setCollapsed(new Set(files.map(file => file.path)))
-      }, [collapseSignal])
+        if (!files.length) return
+        setCollapsed(collapseMode ? new Set(files.map(file => file.path)) : new Set())
+      }, [collapseMode])
       if (state.phase === 'loading') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
       if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
       if (files.length === 0) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('noDiff'))
@@ -872,24 +904,25 @@ window.__ModuleLoader__.load({
               }),
               style: {
                 display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', cursor: 'pointer',
-                position: 'sticky', top: 0, zIndex: 1, background: T.hover,
+                position: 'sticky', top: 0, zIndex: 2, background: T.menu,
                 borderBottom: isCollapsed ? 'none' : `0.5px solid ${T.borderSoft}`,
               },
             },
               h(Chevron, { open: !isCollapsed, size: 8 }),
-              h('span', {
-                style: { width: 12, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: STATUS_COLOR[entry.status] ?? T.subtle },
-              }, entry.status ?? 'M'),
+              h(FileGlyph, { name: entry.path.split('/').pop() ?? entry.path, kind: 'file' }),
               h('span', {
                 title: entry.path,
                 style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 11.5, color: T.ink2 },
               }, entry.path),
               h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.success } }, `+${additions}`),
-              h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.error } }, `−${deletions}`)),
+              h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.error } }, `−${deletions}`),
+              h('span', {
+                style: { width: 14, marginLeft: 2, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: STATUS_COLOR[entry.status] ?? T.subtle },
+              }, entry.status ?? 'M')),
             isCollapsed
               ? null
               : h('div', { style: { padding: '2px 0 6px' } },
-                  h(DiffLines, { file: [entry], view, t, wrap, embedded: true })))
+                  h(DiffLines, { file: [entry], view, t, wrap, embedded: true, context })))
         }))
     }
 
@@ -1703,6 +1736,21 @@ window.__ModuleLoader__.load({
           open ? h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 6px' } }, rows) : null))
     }
 
+    function formatRelativeTime(epochSeconds) {
+      const now = Math.floor(Date.now() / 1000)
+      const diff = Math.max(0, now - epochSeconds)
+      let locale
+      try { locale = document?.documentElement?.lang || undefined } catch { locale = undefined }
+      let rtf
+      try { rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }) } catch { rtf = undefined }
+      if (!rtf) return new Date(epochSeconds * 1000).toLocaleDateString()
+      if (diff < 60) return rtf.format(-diff, 'second')
+      if (diff < 3600) return rtf.format(-Math.round(diff / 60), 'minute')
+      if (diff < 86400) return rtf.format(-Math.round(diff / 3600), 'hour')
+      if (diff < 86400 * 30) return rtf.format(-Math.round(diff / 86400), 'day')
+      return new Date(epochSeconds * 1000).toLocaleDateString()
+    }
+
     /** Unpushed commits for the current worktree (local commits not reachable from any remote). */
     function useLocalCommits(repository, enabled) {
       const [state, setState] = useState({ phase: 'idle', commits: [], error: null })
@@ -1990,16 +2038,18 @@ window.__ModuleLoader__.load({
 
     const DIFF_RENDER_STEP = 600
 
-    function DiffLines({ file, view, t, wrap = false, embedded = false }) {
+    function DiffLines({ file, view, t, wrap = false, embedded = false, context }) {
       const files = Array.isArray(file) ? file : [file]
       const entry = files[0]
       const [visibleCount, setVisibleCount] = useState(DIFF_RENDER_STEP)
       const [expandedHunks, setExpandedHunks] = useState(() => new Set())
+      const [expandedGaps, setExpandedGaps] = useState(() => new Map())
       const scrollRef = useRef(null)
       const resetKey = `${entry?.path ?? ''}|${entry?.additions ?? 0}|${entry?.deletions ?? 0}|${entry?.hunks?.length ?? 0}|${view}`
       useEffect(() => {
         setVisibleCount(DIFF_RENDER_STEP)
         setExpandedHunks(new Set())
+        setExpandedGaps(new Map())
         if (scrollRef.current) scrollRef.current.scrollTop = 0
       }, [resetKey])
       if (!entry) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('noDiff'))
@@ -2011,18 +2061,74 @@ window.__ModuleLoader__.load({
       const bigHunks = new Set()
       entry.hunks.forEach((hunk, index) => { if ((hunk.lines?.length ?? 0) > 1000) bigHunks.add(index) })
       const displayRows = []
+      const collapsedShown = new Set()
       for (const row of rows) {
         if (row.hunkIndex !== undefined && bigHunks.has(row.hunkIndex) && !expandedHunks.has(row.hunkIndex)) {
-          if (row.kind === 'hunk') {
-            displayRows.push(row)
+          if (!collapsedShown.has(row.hunkIndex)) {
+            collapsedShown.add(row.hunkIndex)
             displayRows.push({ kind: 'collapsed-hunk', key: `c:${row.hunkIndex}`, hunkIndex: row.hunkIndex, count: entry.hunks[row.hunkIndex].lines.length })
           }
           continue
         }
         displayRows.push(row)
       }
+      const effectiveWrap = view === 'split' ? true : wrap
       const visibleRows = embedded || visibleCount >= displayRows.length ? displayRows : displayRows.slice(0, visibleCount)
+      const loadGap = async gap => {
+        if (!context?.repoPath || expandedGaps.get(gap.key) === 'loading') return
+        setExpandedGaps(previous => new Map(previous).set(gap.key, 'loading'))
+        try {
+          const data = await api('/lines', {
+            path: context.repoPath, file: entry.path,
+            start: gap.newStart, end: gap.newStart + gap.count - 1,
+            staged: context.staged ? '1' : '0', hash: context.hash ?? '',
+          })
+          setExpandedGaps(previous => new Map(previous).set(gap.key, Array.isArray(data?.lines) ? data.lines : []))
+        } catch {
+          setExpandedGaps(previous => new Map(previous).set(gap.key, []))
+        }
+      }
       const renderRow = row => {
+        if (row.kind === 'gap') {
+          const loaded = expandedGaps.get(row.key)
+          if (Array.isArray(loaded)) {
+            return loaded.map((text, index) => {
+              const newNumber = row.newStart + index
+              const oldNumber = newNumber - (row.delta ?? 0)
+              if (view === 'split') {
+                return h('div', {
+                  key: `${row.key}:${index}`,
+                  style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', minHeight: 20, borderBottom: `0.5px solid ${T.borderSoft}` },
+                },
+                  h(DiffHalf, { line: { number: String(oldNumber), text, kind: 'ctx' }, side: 'left', language, highlight, wrap: effectiveWrap }),
+                  h(DiffHalf, { line: { number: String(newNumber), text, kind: 'ctx' }, side: 'right', language, highlight, wrap: effectiveWrap }))
+              }
+              return h('div', {
+                key: `${row.key}:${index}`,
+                style: { display: 'grid', gridTemplateColumns: '46px 46px 16px minmax(max-content, 1fr)', minHeight: 19, alignItems: 'start' },
+              },
+                h('span', { style: numberStyle }, String(oldNumber)),
+                h('span', { style: numberStyle }, String(newNumber)),
+                h('span', { style: { ...numberStyle, textAlign: 'center', color: T.muted } }, ' '),
+                h('span', {
+                  style: {
+                    fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                    overflowWrap: wrap ? 'anywhere' : undefined, paddingRight: 18, color: 'inherit',
+                  },
+                }, h(CodeText, { text, language, highlight, baseColor: 'inherit' })))
+            })
+          }
+          const loading = loaded === 'loading'
+          return h('button', {
+            key: row.key, type: 'button', disabled: loading || !context?.repoPath,
+            onClick: () => loadGap(row),
+            style: {
+              display: 'block', width: '100%', textAlign: 'left', appearance: 'none', border: 'none',
+              background: T.hover, color: T.muted, padding: '3px 16px', fontSize: 11, fontFamily: MONO,
+              cursor: loading ? 'default' : 'pointer', opacity: context?.repoPath ? 1 : 0.5,
+            },
+          }, loading ? t('loading') : t('unchangedLines', { count: row.count }))
+        }
         if (row.kind === 'hunk') return h('div', { key: row.key, style: hunkHeaderStyle }, row.label)
         if (row.kind === 'notice') return h('div', { key: row.key, style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice'))
         if (row.kind === 'collapsed-hunk') {
@@ -2040,8 +2146,8 @@ window.__ModuleLoader__.load({
             key: row.key,
             style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', minHeight: 20, borderBottom: `0.5px solid ${T.borderSoft}` },
           },
-            h(DiffHalf, { line: row.left, side: 'left', language, highlight, wrap }),
-            h(DiffHalf, { line: row.right, side: 'right', language, highlight, wrap }))
+            h(DiffHalf, { line: row.left, side: 'left', language, highlight, wrap: effectiveWrap }),
+            h(DiffHalf, { line: row.right, side: 'right', language, highlight, wrap: effectiveWrap }))
         }
         const isAdd = row.kindOfLine === 'add'
         const isDel = row.kindOfLine === 'del'
@@ -2161,7 +2267,7 @@ window.__ModuleLoader__.load({
         data.truncated ? h('div', { style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice')) : null)
     }
 
-    function AllDiff({ state, view, t }) {
+    function AllDiff({ state, view, t, context }) {
       if (state.phase === 'loading') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('allDiffLoading'))
       if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
       if (state.entries.length === 0) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('noDiff'))
@@ -2186,7 +2292,7 @@ window.__ModuleLoader__.load({
             : item.entry && item.entry.binary
               ? h('div', { style: { padding: '6px 14px', color: T.muted, fontSize: 11.5 } }, t('binary'))
               : item.entry && item.entry.hunks.length > 0
-                ? h(DiffLines, { file: [item.entry], view, t })
+                ? h(DiffLines, { file: [item.entry], view, t, context })
                 : h('div', { style: { padding: '6px 14px', color: T.muted, fontSize: 11.5 } }, t('noDiff')))))
     }
 
@@ -2270,7 +2376,7 @@ window.__ModuleLoader__.load({
       const [wrap, setWrap] = useState(false)
       const [commitPickerOpen, setCommitPickerOpen] = useState(false)
       const commitPickerRef = useRef(null)
-      const [collapseAllSignal, setCollapseAllSignal] = useState(0)
+      const [allFilesCollapsed, setAllFilesCollapsed] = useState(false)
       const [quoteText, setQuoteText] = useState(undefined)
       const [quoteAnchor, setQuoteAnchor] = useState(undefined)
       const rightCardRef = useRef(null)
@@ -2330,6 +2436,7 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!selection || selection.kind !== 'commit-files') return
         setWrap(false)
+        setAllFilesCollapsed(false)
       }, [selection?.hash])
       useEffect(() => {
         if (!commitMenu) return undefined
@@ -2813,7 +2920,7 @@ window.__ModuleLoader__.load({
                 behind > 0 ? h('span', { title: t('behind') }, `↓${behind}`) : null,
                 status.data?.conflicted?.length ? h('span', { style: { color: T.error, fontFamily: 'inherit' } }, t('conflicts')) : null)
             : null,
-          h(IconButton, { label: t('refresh'), onClick: () => { refreshStatus(); bump(); refreshRepositories() } }, h(RefreshIcon, {}))),
+          ),
 
         // ── body ────────────────────────────────────────────────
         h('div', { style: { display: 'flex', flex: 1, minHeight: 0, gap: 6, padding: '10px 12px 12px', minWidth: 0, position: 'relative' } },
@@ -2861,31 +2968,16 @@ window.__ModuleLoader__.load({
             onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
           }),
 
-          // right column
+          // right column: toolbar card + document card
           h('div', {
-            style: {
-              flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative',
-              borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
-              boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)', overflow: 'hidden',
-            },
-            onMouseUp: captureQuote,
-            ref: rightCardRef,
+            style: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 },
           },
-            quoteText ? h('button', {
-              type: 'button', onClick: quoteSelected,
-              style: {
-                position: 'absolute', zIndex: 20, height: 26, padding: '0 11px',
-                left: quoteAnchor ? quoteAnchor.x : 24, top: quoteAnchor ? Math.max(quoteAnchor.y - 34, 6) : 10,
-                transform: quoteAnchor ? 'translateX(-50%)' : 'none',
-                borderRadius: T.pill, border: `0.5px solid ${T.border}`, background: T.menu,
-                color: T.ink2, fontSize: 11.5, cursor: 'pointer', boxShadow: T.shadowProminent,
-                backdropFilter: 'blur(16px)',
-              },
-            }, t('quoteAction')) : null,
             h('div', {
               style: {
-                display: 'flex', alignItems: 'center', gap: 6, minHeight: 38, padding: '0 10px',
-                borderBottom: `0.5px solid ${T.borderSoft}`, flex: '0 0 auto', minWidth: 0,
+                flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '0 10px',
+                minWidth: 0, borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
+                boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)',
+                position: 'relative', zIndex: 30,
               },
             },
               h('div', { ref: commitPickerRef, style: { position: 'relative', minWidth: 0, flex: '0 1 auto' } },
@@ -2901,7 +2993,7 @@ window.__ModuleLoader__.load({
                 },
                   h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
                     selection?.kind === 'commit-files'
-                      ? `${selection.hash.slice(0, 7)} ${selection.subject ?? ''}`.trim()
+                      ? (selection.subject || selection.hash.slice(0, 7))
                       : t('selectCommit')),
                   h(Chevron, { open: commitPickerOpen, size: 8 })),
                 commitPickerOpen ? h('div', {
@@ -2933,10 +3025,22 @@ window.__ModuleLoader__.load({
                           onMouseEnter: event => { event.currentTarget.style.background = T.hover },
                           onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
                         },
-                          h('span', { style: { fontFamily: MONO, fontSize: 10, color: T.subtle } }, commit.oid.slice(0, 7)),
                           h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, commit.subject || '(no message)'),
-                          h('span', { style: { fontFamily: MONO, fontSize: 10, color: T.subtle } }, new Date(commit.time * 1000).toLocaleDateString()))))
+                          h('span', { style: { fontFamily: MONO, fontSize: 10, color: T.subtle, whiteSpace: 'nowrap' } }, formatRelativeTime(commit.time)))))
                 : null),
+              selection?.kind === 'commit-files'
+                ? h('span', {
+                    style: {
+                      fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap',
+                      border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '1px 8px',
+                    },
+                  }, selection.hash.slice(0, 7))
+                : null,
+              selection?.kind === 'commit-files' && commitPatch.data?.stats
+                ? h('span', { style: { display: 'inline-flex', gap: 7, fontFamily: MONO, fontSize: 10.5, whiteSpace: 'nowrap' } },
+                    h('span', { style: { color: T.success } }, `+${commitPatch.data.stats.additions}`),
+                    h('span', { style: { color: T.error } }, `−${commitPatch.data.stats.deletions}`))
+                : null,
               h('span', { style: { flex: 1 } }),
               h('button', {
                 type: 'button', onClick: () => setWrap(value => !value), title: t('wrapLines'),
@@ -2946,14 +3050,15 @@ window.__ModuleLoader__.load({
                 },
               }, t('wrapLines')),
               h('button', {
-                type: 'button', onClick: () => setCollapseAllSignal(value => value + 1),
-                disabled: selection?.kind !== 'commit-files', title: t('collapseAllFiles'),
+                type: 'button', onClick: () => setAllFilesCollapsed(value => !value),
+                disabled: selection?.kind !== 'commit-files', title: allFilesCollapsed ? t('expandAllFiles') : t('collapseAllFiles'),
                 style: {
                   appearance: 'none', border: `0.5px solid ${T.border}`, cursor: selection?.kind === 'commit-files' ? 'pointer' : 'default',
-                  height: 26, padding: '0 10px', borderRadius: T.pill, fontSize: 11, color: T.muted, background: 'transparent',
+                  height: 26, padding: '0 10px', borderRadius: T.pill, fontSize: 11, color: T.muted,
+                  background: allFilesCollapsed ? T.hover : 'transparent',
                   opacity: selection?.kind === 'commit-files' ? 1 : 0.4,
                 },
-              }, t('collapseAllFiles')),
+              }, allFilesCollapsed ? t('expandAllFiles') : t('collapseAllFiles')),
               h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: T.pill, background: T.hover, border: `0.5px solid ${T.borderSoft}` } },
                 ['unified', 'split'].map(value => h('button', {
                   key: value, type: 'button', onClick: () => setView(value),
@@ -2966,16 +3071,29 @@ window.__ModuleLoader__.load({
                     transition: `background .18s ${T.ease}, color .18s ${T.ease}`,
                   },
                 }, t(value)))),
-              h(IconButton, {
-                label: t('refresh'),
-                onClick: () => {
-                  if (selection?.kind === 'commit-files') refreshCommitPatch()
-                  else if (selection?.kind === 'diff' || selection?.kind === 'commit-diff') refreshDiff()
-                  else if (selection?.kind === 'all') refreshAllDiff()
-                  bump()
-                },
-              }, h(RefreshIcon, {}))),
-            selection ? h('div', {
+              ),
+
+            h('div', {
+              style: {
+                flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative',
+                borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
+                boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)', overflow: 'hidden',
+              },
+              onMouseUp: captureQuote,
+              ref: rightCardRef,
+            },
+            quoteText ? h('button', {
+              type: 'button', onClick: quoteSelected,
+              style: {
+                position: 'absolute', zIndex: 20, height: 26, padding: '0 11px',
+                left: quoteAnchor ? quoteAnchor.x : 24, top: quoteAnchor ? Math.max(quoteAnchor.y - 34, 6) : 10,
+                transform: quoteAnchor ? 'translateX(-50%)' : 'none',
+                borderRadius: T.pill, border: `0.5px solid ${T.border}`, background: T.menu,
+                color: T.ink2, fontSize: 11.5, cursor: 'pointer', boxShadow: T.shadowProminent,
+                backdropFilter: 'blur(16px)',
+              },
+            }, t('quoteAction')) : null,
+            selection && selection.kind !== 'commit-files' ? h('div', {
               style: {
                 display: 'flex', alignItems: 'center', gap: 8, minHeight: 46, padding: '0 14px',
                 borderBottom: `0.5px solid ${T.borderSoft}`, flex: '0 0 auto', minWidth: 0,
@@ -2991,11 +3109,11 @@ window.__ModuleLoader__.load({
                 if (selection.kind === 'commit-files') {
                   const subject = commitPatch.data?.commit?.subject ?? selection.subject ?? ''
                   return h('span', { style: { fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }, title: subject },
-                    h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, marginRight: 7 } }, selection.hash.slice(0, 7)),
                     h('span', { style: { fontWeight: 500 } }, subject))
                 }
                 const parts = splitPath(selection.path)
-                return h('span', { style: { fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }, title: selection.path },
+                return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }, title: selection.path },
+                  h(FileGlyph, { name: parts.name, kind: 'file' }),
                   h('span', { style: { opacity: 0.45 } }, parts.dir),
                   h('span', { style: { fontWeight: 500 } }, parts.name))
               })(),
@@ -3029,11 +3147,18 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
                   : diff.phase === 'error'
                     ? h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, diff.error)
-                    : h(DiffLines, { file: diff.data?.files ?? [], view, t, wrap })
+                    : h(DiffLines, {
+                        file: diff.data?.files ?? [], view, t, wrap,
+                        context: {
+                          repoPath: selection.repoPath ?? active?.path,
+                          staged: Boolean(selection.staged),
+                          hash: selection.kind === 'commit-diff' ? selection.hash : undefined,
+                        },
+                      })
                 : selection.kind === 'all'
-                  ? h(AllDiff, { state: allDiff, view, t })
+                  ? h(AllDiff, { state: allDiff, view, t, context: { repoPath: selection.repoPath ?? active?.path, staged: Boolean(selection.staged) } })
                   : selection.kind === 'commit-files'
-                    ? h(CommitFilesView, { state: commitPatch, view, wrap, t, collapseSignal: collapseAllSignal })
+                    ? h(CommitFilesView, { state: commitPatch, view, wrap, t, collapseMode: allFilesCollapsed, context: { repoPath: selection.repoPath ?? active?.path, hash: selection.hash } })
                   : h(FilePreview, { state: { ...preview, data: preview.data ? { ...preview.data, repoPath: selection.repoPath ?? active?.path } : null }, selection, t })
               : h('div', {
                   style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, textAlign: 'center' },
@@ -3048,7 +3173,7 @@ window.__ModuleLoader__.load({
                       h('path', { d: 'M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z' }),
                       h('path', { d: 'M9 8h6M9 12h6M9 16h4' }))),
                   h('div', { style: { fontFamily: T.serif, fontSize: 18, lineHeight: '26px', fontWeight: 500, color: T.ink2, letterSpacing: '0.01em' } }, t('emptyDiff')),
-                  h('div', { style: { fontSize: 12.5, color: T.muted, maxWidth: 340, lineHeight: '20px' } }, t('emptyDiffHint'))))),
+                  h('div', { style: { fontSize: 12.5, color: T.muted, maxWidth: 340, lineHeight: '20px' } }, t('emptyDiffHint')))))),
 
         h(Dialog, { dialog, onClose: () => setDialog(null) }),
         h(Toast, { toast }))
