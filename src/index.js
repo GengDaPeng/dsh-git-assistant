@@ -11,9 +11,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { lstatSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { basename, extname, resolve, sep } from 'node:path'
+import { basename, dirname, extname, resolve, sep } from 'node:path'
 
 export const name = 'dsh-git-assistant'
 export const inject = ['webServer', 'workspaceRegistry', 'sessionController', 'sessionPersistence']
@@ -42,6 +42,46 @@ const GIT_ENV = (() => {
   ]) delete env[key]
   return env
 })()
+
+const DIFF_CACHE_LIMIT = 300
+const diffCache = new Map()
+const headStamp = { path: undefined, at: 0, sha: '' }
+
+function cacheGetDiff(key) {
+  const value = diffCache.get(key)
+  if (value === undefined) return undefined
+  diffCache.delete(key)
+  diffCache.set(key, value)
+  return value
+}
+
+function cacheSetDiff(key, value) {
+  if (diffCache.size >= DIFF_CACHE_LIMIT) {
+    const oldest = diffCache.keys().next().value
+    if (oldest !== undefined) diffCache.delete(oldest)
+  }
+  diffCache.set(key, value)
+}
+
+function clearDiffCache(repoPath) {
+  const prefix = `${repoPath}|`
+  for (const key of [...diffCache.keys()]) if (key.startsWith(prefix)) diffCache.delete(key)
+}
+
+async function headCommitOf(repoPath) {
+  const now = Date.now()
+  if (headStamp.path === repoPath && now - headStamp.at < 2000) return headStamp.sha
+  const raw = await gitOk(repoPath, ['rev-parse', 'HEAD'])
+  headStamp.path = repoPath
+  headStamp.at = now
+  headStamp.sha = (raw ?? '').trim()
+  return headStamp.sha
+}
+
+async function indexStampOf(repoPath, file) {
+  const raw = await gitOk(repoPath, ['ls-files', '-s', '--', file])
+  return (raw ?? '').trim() || 'missing'
+}
 
 const CONTENT_TYPES = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
@@ -359,6 +399,24 @@ async function branchesOf(repoPath) {
   })
 }
 
+function listDirectory(root, dir) {
+  const absolute = resolve(root, dir || '.')
+  if (!inside(root, absolute)) throw new Error('directory is outside the checkout')
+  const dirents = readdirSync(absolute, { withFileTypes: true })
+  const entries = []
+  for (const dirent of dirents) {
+    if (dirent.name === '.git') continue
+    const kind = dirent.isDirectory() ? 'dir' : dirent.isFile() ? 'file' : dirent.isSymbolicLink() ? 'link' : 'other'
+    entries.push({ name: dirent.name, path: dir ? `${dir}/${dirent.name}` : dirent.name, kind })
+  }
+  entries.sort((left, right) => {
+    if ((left.kind === 'dir') !== (right.kind === 'dir')) return left.kind === 'dir' ? -1 : 1
+    return left.name.localeCompare(right.name)
+  })
+  const truncated = entries.length > 2000
+  return { entries: truncated ? entries.slice(0, 2000) : entries, truncated }
+}
+
 async function filesOf(repoPath) {
   const raw = await gitOk(repoPath, ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { maxBuffer: 32 * 1024 * 1024 })
   if (raw === undefined) throw new Error('not a git checkout')
@@ -416,13 +474,59 @@ async function commitOf(repoPath, hash) {
   }
 }
 
+async function localCommitsOf(repoPath, limit) {
+  const raw = await gitOk(repoPath, [
+    'log', 'HEAD', '--not', '--remotes', `--max-count=${limit}`,
+    '--pretty=format:%H%x1f%an%x1f%at%x1f%s',
+  ])
+  const commits = []
+  for (const line of (raw ?? '').split('\n')) {
+    if (!line.trim()) continue
+    const [oid, author, timeRaw, subject] = line.split('\x1f')
+    commits.push({ oid, author: author ?? '', time: Number(timeRaw ?? 0), subject: subject ?? '' })
+  }
+  return { commits }
+}
+
+async function commitPatchOf(repoPath, hash) {
+  const cacheKey = `${repoPath}|cp|${hash}`
+  const cached = cacheGetDiff(cacheKey)
+  if (cached !== undefined) return cached
+  const meta = await commitOf(repoPath, hash)
+  const parentsRaw = await gitOk(repoPath, ['rev-list', '--parents', '-n', '1', hash])
+  const parents = (parentsRaw ?? '').trim().split(' ').slice(1)
+  const raw = parents.length > 0
+    ? await gitOk(repoPath, ['diff', '--find-renames', '--no-color', '--no-ext-diff', '--unified=3', `${hash}^1`, hash])
+    : await gitOk(repoPath, ['show', '--format=', '--patch', '--root', '--find-renames', '--no-color', '--no-ext-diff', '--unified=3', hash])
+  const files = parseUnifiedDiff(raw ?? '')
+  const byPath = new Map(meta.files.map(file => [file.path, file]))
+  for (const entry of files) {
+    const info = byPath.get(entry.path)
+    if (info) {
+      entry.status = info.status
+      entry.additions = info.additions
+      entry.deletions = info.deletions
+    } else if (!entry.status) {
+      entry.status = entry.newFile ? 'A' : entry.deletedFile ? 'D' : 'M'
+    }
+  }
+  const result = { commit: meta.commit, stats: meta.stats, files }
+  cacheSetDiff(cacheKey, result)
+  return result
+}
+
 async function commitDiffOf(repoPath, hash, file) {
+  const cacheKey = `${repoPath}|c|${hash}|${file}`
+  const cached = cacheGetDiff(cacheKey)
+  if (cached !== undefined) return cached
   const parentsRaw = await gitOk(repoPath, ['rev-list', '--parents', '-n', '1', hash])
   const parents = (parentsRaw ?? '').trim().split(' ').slice(1)
   const raw = parents.length > 0
     ? await gitOk(repoPath, ['diff', '--find-renames', `${hash}^1`, hash, '--', file])
     : await gitOk(repoPath, ['show', '--format=', '--patch', '--root', '--find-renames', hash, '--', file])
-  return parseUnifiedDiff(raw ?? '')
+  const files = parseUnifiedDiff(raw ?? '')
+  cacheSetDiff(cacheKey, files)
+  return files
 }
 
 async function graphOf(repoPath, limit, skip, scope) {
@@ -501,20 +605,43 @@ async function diffOf(repoPath, file, staged) {
   const absolute = resolve(repoPath, file)
   if (!inside(repoPath, absolute)) throw new Error('file is outside the checkout')
 
+  let cacheKey
+  if (staged) {
+    cacheKey = `${repoPath}|s|${file}|${await indexStampOf(repoPath, file)}`
+  } else {
+    let statKey = 'missing'
+    try {
+      const stat = statSync(absolute)
+      statKey = `${stat.mtimeMs}:${stat.size}`
+    } catch { /* missing file */ }
+    cacheKey = `${repoPath}|w|${file}|${await headCommitOf(repoPath)}|${statKey}`
+  }
+  const cached = cacheGetDiff(cacheKey)
+  if (cached !== undefined) return cached
+
+  let files
   if (staged) {
     const raw = await gitOk(repoPath, ['diff', '--cached', '--no-color', '--no-ext-diff', '--unified=3', '--', file])
-    return parseUnifiedDiff(raw ?? '')
+    files = parseUnifiedDiff(raw ?? '')
+  } else {
+    const raw = await gitOk(repoPath, ['diff', '--no-color', '--no-ext-diff', '--unified=3', '--', file])
+    if (raw !== undefined && raw.trim().length > 0) {
+      files = parseUnifiedDiff(raw)
+    } else {
+      const tracked = await gitOk(repoPath, ['ls-files', '--error-unmatch', '--', file])
+      if (tracked !== undefined) {
+        files = []
+      } else {
+        const untracked = await runGit(repoPath, ['diff', '--no-color', '--no-ext-diff', '--unified=3', '--no-index', '--', '/dev/null', file])
+        files = parseUnifiedDiff(untracked.stdout)
+        for (const entry of files) {
+          entry.path = file
+          entry.newFile = true
+        }
+      }
+    }
   }
-  const raw = await gitOk(repoPath, ['diff', '--no-color', '--no-ext-diff', '--unified=3', '--', file])
-  if (raw !== undefined && raw.trim().length > 0) return parseUnifiedDiff(raw)
-  const tracked = await gitOk(repoPath, ['ls-files', '--error-unmatch', '--', file])
-  if (tracked !== undefined) return []
-  const untracked = await runGit(repoPath, ['diff', '--no-color', '--no-ext-diff', '--unified=3', '--no-index', '--', '/dev/null', file])
-  const files = parseUnifiedDiff(untracked.stdout)
-  for (const entry of files) {
-    entry.path = file
-    entry.newFile = true
-  }
+  cacheSetDiff(cacheKey, files)
   return files
 }
 
@@ -542,14 +669,40 @@ function readTextFile(repoPath, file) {
   }
 }
 
-function rawFile(repoPath, file, res) {
+function spawnDetached(command) {
+  try {
+    const child = spawn(command[0], command.slice(1), { detached: true, stdio: 'ignore' })
+    child.unref()
+  } catch { /* best effort */ }
+}
+
+/** Reveal a file or folder in the platform file manager. */
+function revealInFileManager(repoPath, file) {
+  const absolute = absoluteFile(repoPath, file)
+  const directory = statSync(absolute).isDirectory()
+  if (process.platform === 'darwin') spawnDetached(['open', ...(directory ? [absolute] : ['-R', absolute])])
+  else if (process.platform === 'win32') spawnDetached(['explorer', directory ? absolute : `/select,${absolute}`])
+  else spawnDetached(['xdg-open', directory ? absolute : dirname(absolute)])
+}
+
+/** Open a file or folder with the platform default application. */
+function openWithDefaultApp(repoPath, file) {
+  const absolute = absoluteFile(repoPath, file)
+  if (process.platform === 'darwin') spawnDetached(['open', absolute])
+  else if (process.platform === 'win32') spawnDetached(['cmd', '/c', 'start', '', absolute])
+  else spawnDetached(['xdg-open', absolute])
+}
+
+function rawFile(repoPath, file, res, download = false) {
   const absolute = absoluteFile(repoPath, file)
   const stat = statSync(absolute)
   if (!stat.isFile()) throw new Error('not a file')
   if (stat.size > MAX_RAW_BYTES) throw new Error('file is too large to serve')
   const type = CONTENT_TYPES[extname(absolute).toLowerCase()] ?? 'application/octet-stream'
   const buffer = readFileSync(absolute)
-  res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+  const headers = { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }
+  if (download) headers['content-disposition'] = `attachment; filename="${basename(absolute).replace(/"/g, '')}"`
+  res.writeHead(200, headers)
   res.end(buffer)
 }
 
@@ -690,6 +843,21 @@ export function apply(ctx) {
           return
         }
 
+        if (req.method === 'GET' && route === '/local-commits') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 80))
+          json(res, 200, await localCommitsOf(target.path, limit))
+          return
+        }
+        if (req.method === 'GET' && route === '/commit-patch') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const hash = url.searchParams.get('hash')
+          if (!hash || !/^[0-9a-f]{4,64}$/i.test(hash)) { json(res, 400, { error: 'invalid hash' }); return }
+          json(res, 200, await commitPatchOf(target.path, hash))
+          return
+        }
         if (req.method === 'GET' && route === '/commit') {
           const target = await knownCheckout(ctx, url.searchParams.get('path'))
           if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
@@ -705,6 +873,12 @@ export function apply(ctx) {
           const file = url.searchParams.get('file')
           if (!hash || !/^[0-9a-f]{4,64}$/i.test(hash) || !file) { json(res, 400, { error: 'invalid commit diff request' }); return }
           json(res, 200, { file, hash, files: await commitDiffOf(target.path, hash, file) })
+          return
+        }
+        if (req.method === 'GET' && route === '/fs/list') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          json(res, 200, listDirectory(target.path, url.searchParams.get('dir') ?? ''))
           return
         }
         if (req.method === 'GET' && route === '/graph') {
@@ -744,7 +918,7 @@ export function apply(ctx) {
             json(res, 200, { file, staged, files: await diffOf(checkout.path, file, staged) })
             return
           }
-          if (route === '/raw') { rawFile(checkout.path, file, res); return }
+          if (route === '/raw') { rawFile(checkout.path, file, res, url.searchParams.get('download') === '1'); return }
           json(res, 200, readTextFile(checkout.path, file))
           return
         }
@@ -753,8 +927,21 @@ export function apply(ctx) {
           const body = await readJsonBody(req)
           const checkout = await knownCheckout(ctx, body?.path)
           if (!checkout) { json(res, 400, { error: 'unknown checkout' }); return }
+          if (route === '/reveal') {
+            if (!body.file) { json(res, 400, { error: 'missing file' }); return }
+            revealInFileManager(checkout.path, body.file)
+            json(res, 200, { ok: true })
+            return
+          }
+          if (route === '/open') {
+            if (!body.file) { json(res, 400, { error: 'missing file' }); return }
+            openWithDefaultApp(checkout.path, body.file)
+            json(res, 200, { ok: true })
+            return
+          }
           if (route === '/sync') {
             await syncWorktree(checkout.path)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
@@ -772,6 +959,7 @@ export function apply(ctx) {
             const files = safeFileList(body.files)
             if (!files) { json(res, 400, { error: 'invalid file list' }); return }
             await stageFiles(checkout.path, files)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
@@ -779,6 +967,7 @@ export function apply(ctx) {
             const files = safeFileList(body.files)
             if (!files) { json(res, 400, { error: 'invalid file list' }); return }
             await unstageFiles(checkout.path, files)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
@@ -786,6 +975,7 @@ export function apply(ctx) {
             const files = safeFileList(body.files)
             if (!files) { json(res, 400, { error: 'invalid file list' }); return }
             await discardFiles(checkout.path, files)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
@@ -793,16 +983,19 @@ export function apply(ctx) {
             const message = typeof body.message === 'string' ? body.message : ''
             const action = typeof body.action === 'string' ? body.action : (body.amend ? 'amend' : 'commit')
             const result = await commitFiles(checkout.path, message, action)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true, ...result })
             return
           }
           if (route === '/switch') {
             await switchBranch(checkout.path, body.branch)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
           if (route === '/branch/create') {
             await createBranch(checkout.path, body.name, body.from)
+            clearDiffCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
