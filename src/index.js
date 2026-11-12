@@ -474,6 +474,25 @@ async function commitOf(repoPath, hash) {
   }
 }
 
+async function linesOf(repoPath, file, start, end, staged, hash) {
+  let content
+  if (hash) {
+    content = await gitOk(repoPath, ['show', `${hash}:${file}`])
+  } else if (staged) {
+    content = await gitOk(repoPath, ['show', `:${file}`])
+  } else {
+    const absolute = absoluteFile(repoPath, file)
+    const buffer = readFileSync(absolute)
+    if (buffer.includes(0)) throw new Error('binary file')
+    content = buffer.toString('utf8')
+  }
+  if (content === undefined) throw new Error('file not found')
+  const lines = content.split('\n')
+  const from = Math.max(1, Math.min(start, lines.length + 1))
+  const to = Math.max(from, Math.min(end, from + 399))
+  return { start: from, lines: lines.slice(from - 1, to) }
+}
+
 async function localCommitsOf(repoPath, limit) {
   const raw = await gitOk(repoPath, [
     'log', 'HEAD', '--not', '--remotes', `--max-count=${limit}`,
@@ -843,6 +862,22 @@ export function apply(ctx) {
           return
         }
 
+        if (req.method === 'GET' && route === '/lines') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const file = url.searchParams.get('file')
+          if (!file) { json(res, 400, { error: 'missing file' }); return }
+          const start = Math.max(1, Number(url.searchParams.get('start')) || 1)
+          const end = Math.max(start, Number(url.searchParams.get('end')) || start + 199)
+          const staged = url.searchParams.get('staged') === '1'
+          const hash = url.searchParams.get('hash') ?? ''
+          try {
+            json(res, 200, await linesOf(target.path, file, start, end, staged, hash))
+          } catch (error) {
+            json(res, 400, { error: String(error?.message ?? error) })
+          }
+          return
+        }
         if (req.method === 'GET' && route === '/local-commits') {
           const target = await knownCheckout(ctx, url.searchParams.get('path'))
           if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
