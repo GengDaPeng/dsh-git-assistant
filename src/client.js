@@ -45,6 +45,9 @@ window.__ModuleLoader__.load({
         unstagedDone: '已取消暂存 {count} 个文件', committed: '已提交', branchPlaceholder: '新分支名…', createBranch: '新建分支',
         switchConfirmTitle: '切换分支？', switchConfirm: '当前有未提交的更改，切换后会带到 {branch}。继续？',
         filterPlaceholder: '筛选文件…', filesLoading: '读取文件列表…', noFiles: '没有文件',
+        copyPath: '复制文件路径', copyFolderPath: '复制文件夹路径', copyImage: '复制图片',
+        downloadFile: '下载', saveAs: '另存为…', revealInFinder: '在 Finder 中显示', openDefaultApp: '用默认应用打开',
+        copiedPath: '已复制路径', imageCopied: '图片已复制', actionFailed: '操作失败',
         filesTruncated: '文件过多，仅显示前 {count} 个',
         conflicts: '冲突', ahead: '待推送', behind: '待拉取', detached: '游离 HEAD',
         loadError: '读取失败', omitted: '另有 {count} 个未跟踪文件未列出',
@@ -77,6 +80,23 @@ window.__ModuleLoader__.load({
         quoteAction: '引用文本',
         quoted: '已引用到对话输入框',
         quoteCopied: '已复制选中文本，可粘贴到对话',
+        branches: '分支',
+        changes: '更改',
+        graphOptions: '图形选项',
+        commitScope: '提交范围',
+        currentBranch: '当前分支',
+        allRefs: '所有引用（含远端/标签）',
+        fileDisplayMode: '提交文件展示方式',
+        viewTree: '树形展示',
+        viewList: '列表展示',
+        statsFiles: '{count} 个文件',
+        unknownAuthor: '未知作者',
+        cardRenderFailed: '卡片渲染失败：{error}',
+        moreCommitActions: '更多提交方式',
+        moreLines: '已显示 {shown} / {total} 行，继续滚动加载',
+        selectCommit: '选择提交', unpushedCommits: '未推送的提交', noUnpushedCommits: '当前分支没有未推送的提交',
+        wrapLines: '换行', collapseAllFiles: '全部折叠', workspaceChanges: '工作区更改', commitChanges: '本次提交的更改',
+        diffHunkCollapsed: '这个 hunk 有 {count} 行，点击展开',
         dirtyCount: '{count} 个文件有改动',
       },
       en: {
@@ -101,6 +121,9 @@ window.__ModuleLoader__.load({
         unstagedDone: 'Unstaged {count} files', committed: 'Committed', branchPlaceholder: 'New branch name…', createBranch: 'Create branch',
         switchConfirmTitle: 'Switch branch?', switchConfirm: 'There are uncommitted changes; they will follow you to {branch}. Continue?',
         filterPlaceholder: 'Filter files…', filesLoading: 'Loading files…', noFiles: 'No files',
+        copyPath: 'Copy file path', copyFolderPath: 'Copy folder path', copyImage: 'Copy image',
+        downloadFile: 'Download', saveAs: 'Save as…', revealInFinder: 'Reveal in Finder', openDefaultApp: 'Open with default app',
+        copiedPath: 'Path copied', imageCopied: 'Image copied', actionFailed: 'Action failed',
         filesTruncated: 'Too many files; showing the first {count}',
         conflicts: 'conflicts', ahead: 'to push', behind: 'to pull', detached: 'Detached HEAD',
         loadError: 'Failed to load', omitted: '{count} more untracked files not listed',
@@ -133,6 +156,23 @@ window.__ModuleLoader__.load({
         quoteAction: 'Quote',
         quoted: 'Quoted into the chat composer',
         quoteCopied: 'Selection copied — paste it into the chat',
+        branches: 'Branches',
+        changes: 'Changes',
+        graphOptions: 'Graph options',
+        commitScope: 'Commit scope',
+        currentBranch: 'Current branch',
+        allRefs: 'All refs (remote + tags)',
+        fileDisplayMode: 'Commit file display',
+        viewTree: 'Tree view',
+        viewList: 'List view',
+        statsFiles: '{count} files',
+        unknownAuthor: 'Unknown author',
+        cardRenderFailed: 'Card render failed: {error}',
+        moreCommitActions: 'More commit actions',
+        moreLines: 'Showing {shown} / {total} lines — scroll to load more',
+        selectCommit: 'Select commit', unpushedCommits: 'Unpushed commits', noUnpushedCommits: 'No unpushed commits on this branch',
+        wrapLines: 'Wrap lines', collapseAllFiles: 'Collapse all', workspaceChanges: 'Working tree changes', commitChanges: 'Changes in this commit',
+        diffHunkCollapsed: 'This hunk has {count} lines — click to expand',
         dirtyCount: '{count} changed files',
       },
     }
@@ -299,12 +339,58 @@ window.__ModuleLoader__.load({
       return tokens
     }
 
+    /* Syntax colors follow GitHub Primer (github-dark / github-light); icon set follows Material Icon Theme (MIT). */
+    const GITHUB_SYNTAX = {
+      dark: { keyword: '#ff7b72', string: '#a5d6ff', number: '#79c0ff', literal: '#79c0ff', comment: '#8b949e' },
+      light: { keyword: '#cf222e', string: '#0a3069', number: '#0550ae', literal: '#0550ae', comment: '#6e7781' },
+    }
+    let codePalette = GITHUB_SYNTAX.dark
+    const paletteListeners = new Set()
+    function isDarkUi() {
+      try {
+        if (typeof document === 'undefined' || !document.body || typeof getComputedStyle !== 'function') throw new Error('no dom')
+        const background = getComputedStyle(document.body).backgroundColor
+        const match = background.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+        if (match) {
+          const red = Number(match[1])
+          const green = Number(match[2])
+          const blue = Number(match[3])
+          if (red + green + blue > 0) return 0.2126 * red + 0.7152 * green + 0.0722 * blue < 128
+        }
+      } catch { /* fall through */ }
+      try { return window.matchMedia?.('(prefers-color-scheme: dark)')?.matches ?? true } catch { return true }
+    }
+    function refreshCodePalette() {
+      const next = isDarkUi() ? GITHUB_SYNTAX.dark : GITHUB_SYNTAX.light
+      if (next === codePalette) return
+      codePalette = next
+      for (const listener of paletteListeners) listener()
+    }
+    if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+      try {
+        const observer = new MutationObserver(() => refreshCodePalette())
+        for (const target of [document.documentElement, document.body]) {
+          if (target) observer.observe(target, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+        }
+      } catch { /* ignore */ }
+    }
+    function useCodePalette() {
+      const [, force] = useState(0)
+      useEffect(() => {
+        const listener = () => force(value => value + 1)
+        paletteListeners.add(listener)
+        refreshCodePalette()
+        return () => paletteListeners.delete(listener)
+      }, [])
+      return codePalette
+    }
+
     function tokenStyle(kind, baseColor) {
-      if (kind === 'comment') return { color: T.muted, opacity: 0.75 }
-      if (kind === 'string') return { color: T.success, opacity: 0.85 }
-      if (kind === 'number') return { color: T.warn, opacity: 0.9 }
-      if (kind === 'keyword') return { color: T.brand, opacity: 0.9 }
-      if (kind === 'literal') return { color: T.warn, opacity: 0.9 }
+      if (kind === 'comment') return { color: codePalette.comment, opacity: 0.9 }
+      if (kind === 'string') return { color: codePalette.string }
+      if (kind === 'number') return { color: codePalette.number }
+      if (kind === 'literal') return { color: codePalette.literal }
+      if (kind === 'keyword') return { color: codePalette.keyword }
       return { color: baseColor }
     }
 
@@ -322,7 +408,7 @@ window.__ModuleLoader__.load({
       let budget = MAX_DIFF_LINES
       hunks.forEach((hunk, hunkIndex) => {
         if (budget <= 0) return
-        rows.push({ kind: 'hunk', key: `h:${hunkIndex}`, label: `${hunk.header}${hunk.section ? `  ${hunk.section}` : ''}` })
+        rows.push({ kind: 'hunk', key: `h:${hunkIndex}`, hunkIndex, label: `${hunk.header}${hunk.section ? `  ${hunk.section}` : ''}` })
         let oldNumber = hunk.oldStart
         let newNumber = hunk.newStart
         hunk.lines.forEach((line, lineIndex) => {
@@ -331,7 +417,7 @@ window.__ModuleLoader__.load({
           const isAdd = line.kind === 'add'
           const isDel = line.kind === 'del'
           rows.push({
-            kind: 'line', key: `l:${hunkIndex}:${lineIndex}`,
+            kind: 'line', key: `l:${hunkIndex}:${lineIndex}`, hunkIndex,
             oldNumber: isAdd ? '' : String(oldNumber++),
             newNumber: isDel ? '' : String(newNumber++),
             sign: isAdd ? '+' : isDel ? '−' : ' ',
@@ -350,7 +436,7 @@ window.__ModuleLoader__.load({
       let budget = MAX_DIFF_LINES
       hunks.forEach((hunk, hunkIndex) => {
         if (budget <= 0) return
-        rows.push({ kind: 'hunk', key: `h:${hunkIndex}`, label: `${hunk.header}${hunk.section ? `  ${hunk.section}` : ''}` })
+        rows.push({ kind: 'hunk', key: `h:${hunkIndex}`, hunkIndex, label: `${hunk.header}${hunk.section ? `  ${hunk.section}` : ''}` })
         let oldNumber = hunk.oldStart
         let newNumber = hunk.newStart
         let index = 0
@@ -359,7 +445,7 @@ window.__ModuleLoader__.load({
           const line = lines[index]
           if (line.kind === 'ctx') {
             budget -= 1
-            rows.push({ kind: 'pair', key: `p:${hunkIndex}:${index}`, left: { number: String(oldNumber++), text: line.text, kind: 'ctx' }, right: { number: String(newNumber++), text: line.text, kind: 'ctx' }, language, highlight })
+            rows.push({ kind: 'pair', key: `p:${hunkIndex}:${index}`, hunkIndex, left: { number: String(oldNumber++), text: line.text, kind: 'ctx' }, right: { number: String(newNumber++), text: line.text, kind: 'ctx' }, language, highlight })
             index += 1
             continue
           }
@@ -373,7 +459,7 @@ window.__ModuleLoader__.load({
             const left = dels[offset]
             const right = adds[offset]
             rows.push({
-              kind: 'pair', key: `p:${hunkIndex}:${index}:${offset}`,
+              kind: 'pair', key: `p:${hunkIndex}:${index}:${offset}`, hunkIndex,
               left: left ? { number: String(oldNumber++), text: left.text, kind: 'del' } : undefined,
               right: right ? { number: String(newNumber++), text: right.text, kind: 'add' } : undefined,
               language, highlight,
@@ -540,25 +626,58 @@ window.__ModuleLoader__.load({
     function useStatusAt(path, enabled) {
       const [state, setState] = useState({ phase: 'idle', data: null, error: null })
       const [version, setVersion] = useState(0)
+      const failuresRef = useRef(0)
       useEffect(() => {
-        if (!path || !enabled) { setState({ phase: 'idle', data: null, error: null }); return undefined }
+        if (!path) { setState({ phase: 'idle', data: null, error: null }); return undefined }
+        if (!enabled) return undefined
         let live = true
+        let timer
+        const tick = async () => {
+          if (!live) return
+          if (typeof document !== 'undefined' && document.hidden) {
+            timer = setTimeout(tick, POLL_MS)
+            return
+          }
+          try {
+            const data = await api('/status', { path })
+            if (!live) return
+            failuresRef.current = 0
+            setState({ phase: 'ready', data, error: null })
+          } catch (error) {
+            if (!live) return
+            failuresRef.current = Math.min(failuresRef.current + 1, 4)
+            setState(previous => ({ ...previous, phase: 'error', error: String(error?.message ?? error) }))
+          }
+          const backoff = failuresRef.current > 0 ? Math.min(60000, POLL_MS * 2 ** failuresRef.current) : POLL_MS
+          timer = setTimeout(tick, backoff)
+        }
+        const wake = () => {
+          if (typeof document !== 'undefined' && document.hidden) return
+          clearTimeout(timer)
+          tick()
+        }
         setState(previous => ({ ...previous, phase: previous.data ? 'ready' : 'loading' }))
-        api('/status', { path })
-          .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
-          .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
-        return () => { live = false }
+        tick()
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
+        if (typeof window !== 'undefined') window.addEventListener('focus', wake)
+        return () => {
+          live = false
+          clearTimeout(timer)
+          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake)
+          if (typeof window !== 'undefined') window.removeEventListener('focus', wake)
+        }
       }, [path, enabled, version])
-      return [state, () => setVersion(value => value + 1)]
+      return [state, () => { failuresRef.current = 0; setVersion(value => value + 1) }]
     }
 
     /** One worktree is one complete operable area: header, commit box, staged/changed lists. */
-    function WorktreeCard({ t, item, defaultOpen, onOpen, onNotify, selectedPath, onChanged, onSelect }) {
+    function WorktreeCard({ t, item, defaultOpen, onOpen, onNotify, selectedPath, onChanged, onSelect, onDiscardAll, visible = true }) {
       const [open, setOpen] = useState(defaultOpen)
-      const [status, refreshStatus] = useStatusAt(item.path, open)
+      const [status, refreshStatus] = useStatusAt(item.path, open && visible)
       const [busy, setBusy] = useState(false)
       const [expanded, setExpanded] = useState(true)
       const [expandedDirs, setExpandedDirs] = useState(() => new Set())
+      const [collapsedSections, setCollapsedSections] = useState(() => new Set())
       const [hoveredKey, setHoveredKey] = useState(undefined)
       const messageRef = useRef(null)
       const data = status.data
@@ -570,6 +689,12 @@ window.__ModuleLoader__.load({
       const changeTree = useMemo(() => fileRows(changeFiles), [data])
       const stagedStatus = useMemo(() => new Map(stagedFiles.map(file => [file.path, file.status])), [data])
       const changeStatus = useMemo(() => new Map(changeFiles.map(file => [file.path, file.status])), [data])
+      const toggleSection = name => setCollapsedSections(previous => {
+        const next = new Set(previous)
+        if (next.has(name)) next.delete(name)
+        else next.add(name)
+        return next
+      })
       const toggleDir = path => setExpandedDirs(previous => {
         const next = new Set(previous)
         if (next.has(path)) next.delete(path)
@@ -642,11 +767,23 @@ window.__ModuleLoader__.load({
               cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
             },
           }, busy ? (needsSync ? t('syncing') : t('committing')) : needsSync ? `⟳ ${t('syncChanges')} ${behind}↓` : `✓ ${t('commit')}`),
-          stagedFiles.length > 0 ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0 0' } },
-            h('span', { style: { fontSize: 10.5, fontWeight: 600, color: T.muted } }, t('staged')),
+          stagedFiles.length > 0 ? h('div', {
+            onClick: () => toggleSection('staged'),
+            style: {
+              display: 'flex', alignItems: 'center', gap: 4, margin: '0 4px', padding: '2px 6px 0',
+              borderRadius: T.rSm, cursor: 'pointer', transition: `background .12s ${T.ease}`,
+            },
+            onMouseEnter: event => { event.currentTarget.style.background = T.hover },
+            onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
+          },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 10.5, fontWeight: 600 } },
+              h(Chevron, { open: !collapsedSections.has('staged'), size: 8 }),
+              h('span', null, t('staged'))),
             h('span', { style: { flex: 1 } }),
+            h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center' } },
+              h(IconAction, { label: t('unstageAll'), disabled: busy, onClick: () => runAction(() => apiPost('/unstage', { path: item.path, files: stagedFiles.map(file => file.path) })) }, h(IconMinus))),
             h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(stagedFiles.length))) : null,
-          stagedFiles.length > 0
+          stagedFiles.length > 0 && !collapsedSections.has('staged')
             ? h(TreeRows, {
                 node: stagedTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
                 onOpen: file => onOpen(file, item.path),
@@ -659,12 +796,27 @@ window.__ModuleLoader__.load({
                 hoveredKey, onHoverKey: setHoveredKey,
               })
             : null,
-          changeFiles.length > 0 ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 0 0' } },
-            h('span', { style: { fontSize: 10.5, fontWeight: 600, color: T.muted } }, t('changes')),
+          changeFiles.length > 0 ? h('div', {
+            onClick: () => toggleSection('changes'),
+            style: {
+              display: 'flex', alignItems: 'center', gap: 4, margin: '0 4px', padding: '4px 6px 0',
+              borderRadius: T.rSm, cursor: 'pointer', transition: `background .12s ${T.ease}`,
+            },
+            onMouseEnter: event => { event.currentTarget.style.background = T.hover },
+            onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
+          },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 10.5, fontWeight: 600 } },
+              h(Chevron, { open: !collapsedSections.has('changes'), size: 8 }),
+              h('span', null, t('changes'))),
             h('span', { style: { flex: 1 } }),
-            h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => runAction(() => apiPost('/stage', { path: item.path, files: changeFiles.map(file => file.path) })) }, h(IconPlus)),
+            h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center', gap: 1 } },
+              h(IconAction, {
+                label: t('discardAll'), danger: true, disabled: busy || changeFiles.length === 0,
+                onClick: () => onDiscardAll?.(changeFiles.map(file => file.path)),
+              }, h(IconUndo)),
+              h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => runAction(() => apiPost('/stage', { path: item.path, files: changeFiles.map(file => file.path) })) }, h(IconPlus))),
             h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(changeFiles.length))) : null,
-          changeFiles.length > 0
+          changeFiles.length > 0 && !collapsedSections.has('changes')
             ? h(TreeRows, {
                 node: changeTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
                 onOpen: file => onOpen(file, item.path),
@@ -687,6 +839,58 @@ window.__ModuleLoader__.load({
             : null,
           status.phase === 'loading' ? h('div', { style: { fontSize: 10.5, color: T.muted } }, t('loading')) : null,
           status.phase === 'error' ? h('div', { style: { fontSize: 10.5, color: T.error } }, status.error) : null) : null)
+    }
+
+    /** Multi-file diff for one commit: file cards with collapse, wrap and per-file diff. */
+    function CommitFilesView({ state, view, wrap, t, collapseSignal }) {
+      const [collapsed, setCollapsed] = useState(() => new Set())
+      const files = state.data?.files ?? []
+      useEffect(() => {
+        if (!files.length) return
+        setCollapsed(new Set(files
+          .filter(file => (file.additions ?? 0) + (file.deletions ?? 0) > 3000)
+          .map(file => file.path)))
+      }, [state.data])
+      useEffect(() => {
+        if (collapseSignal > 0 && files.length) setCollapsed(new Set(files.map(file => file.path)))
+      }, [collapseSignal])
+      if (state.phase === 'loading') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
+      if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
+      if (files.length === 0) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('noDiff'))
+      return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', paddingBottom: 16 } },
+        files.map(entry => {
+          const isCollapsed = collapsed.has(entry.path)
+          const additions = entry.additions ?? 0
+          const deletions = entry.deletions ?? 0
+          return h('div', { key: entry.path, style: { borderBottom: `0.5px solid ${T.borderSoft}` } },
+            h('div', {
+              onClick: () => setCollapsed(previous => {
+                const next = new Set(previous)
+                if (next.has(entry.path)) next.delete(entry.path)
+                else next.add(entry.path)
+                return next
+              }),
+              style: {
+                display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', cursor: 'pointer',
+                position: 'sticky', top: 0, zIndex: 1, background: T.hover,
+                borderBottom: isCollapsed ? 'none' : `0.5px solid ${T.borderSoft}`,
+              },
+            },
+              h(Chevron, { open: !isCollapsed, size: 8 }),
+              h('span', {
+                style: { width: 12, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: STATUS_COLOR[entry.status] ?? T.subtle },
+              }, entry.status ?? 'M'),
+              h('span', {
+                title: entry.path,
+                style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: MONO, fontSize: 11.5, color: T.ink2 },
+              }, entry.path),
+              h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.success } }, `+${additions}`),
+              h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.error } }, `−${deletions}`)),
+            isCollapsed
+              ? null
+              : h('div', { style: { padding: '2px 0 6px' } },
+                  h(DiffLines, { file: [entry], view, t, wrap, embedded: true })))
+        }))
     }
 
     const LANE_COLORS = ['#60a5fa', '#fbbf24', '#34d399', '#f472b6', '#fb923c', '#38bdf8', '#a78bfa', '#f87171']
@@ -811,7 +1015,7 @@ window.__ModuleLoader__.load({
     /** Collapsible commit-graph drawer docked at the bottom of the workbench column. */
     function GraphPanel({ t, repository, width, onOpenDiff }) {
       const [expanded, setExpanded] = useState(false)
-      const [height, setHeight] = useState(236)
+      const [height, setHeight] = useState(472)
       const [state, setState] = useState({ phase: 'idle', commits: [], hasMore: true })
       const [loadingMore, setLoadingMore] = useState(false)
       const [scope, setScope] = useState(() => { try { return window.localStorage.getItem('dsh-git-assistant:graph-scope') ?? 'branch' } catch { return 'branch' } })
@@ -914,7 +1118,7 @@ window.__ModuleLoader__.load({
           onClick: event => event.stopPropagation(),
         },
           h('button', {
-            type: 'button', title: '图形选项', onClick: event => { event.stopPropagation(); setMenuOpen(open => !open) },
+            type: 'button', title: t('graphOptions'), onClick: event => { event.stopPropagation(); setMenuOpen(open => !open) },
             style: {
               appearance: 'none', border: 'none', background: menuOpen ? T.hover : 'transparent', color: T.muted,
               width: 22, height: 22, borderRadius: T.rSm, cursor: 'pointer', fontSize: 14, lineHeight: '18px', padding: 0,
@@ -927,8 +1131,8 @@ window.__ModuleLoader__.load({
               boxShadow: T.shadowProminent, backdropFilter: 'blur(24px) saturate(160%)',
             },
           },
-            h('div', { style: { padding: '4px 8px 3px', fontSize: 10, color: T.subtle } }, '提交范围'),
-            ...[['branch', '当前分支'], ['all', '所有引用（含远端/标签）']].map(([value, label]) => h('button', {
+            h('div', { style: { padding: '4px 8px 3px', fontSize: 10, color: T.subtle } }, t('commitScope')),
+            ...[['branch', t('currentBranch')], ['all', t('allRefs')]].map(([value, label]) => h('button', {
               key: `scope-${value}`, type: 'button', onClick: () => chooseScope(value),
               style: {
                 appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
@@ -941,8 +1145,8 @@ window.__ModuleLoader__.load({
               h('span', { style: { width: 12, color: T.success } }, scope === value ? '✓' : ''),
               h('span', null, label))),
             h('div', { style: { height: 1, background: T.borderSoft, margin: '4px 6px' } }),
-            h('div', { style: { padding: '4px 8px 3px', fontSize: 10, color: T.subtle } }, '提交文件展示方式'),
-            ...[['tree', '树形展示'], ['list', '列表展示']].map(([value, label]) => h('button', {
+            h('div', { style: { padding: '4px 8px 3px', fontSize: 10, color: T.subtle } }, t('fileDisplayMode')),
+            ...[['tree', t('viewTree')], ['list', t('viewList')]].map(([value, label]) => h('button', {
               key: value, type: 'button', onClick: () => chooseFileView(value),
               style: {
                 appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
@@ -1017,7 +1221,7 @@ window.__ModuleLoader__.load({
                           }))),
                         h('div', { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 2 } },
                           h('div', { style: { fontSize: 10.5, color: T.muted, padding: '2px 0 3px' } },
-                            ready ? `${detail.data.stats.files} 个文件` : t('loading'),
+                            ready ? t('statsFiles', { count: detail.data.stats.files }) : t('loading'),
                             ready ? h('span', { style: { color: T.success, marginLeft: 6 } }, `+${detail.data.stats.additions}`) : null,
                             ready ? h('span', { style: { color: T.error, marginLeft: 6 } }, `−${detail.data.stats.deletions}`) : null),
                           detail?.phase === 'error'
@@ -1067,7 +1271,7 @@ window.__ModuleLoader__.load({
           },
             h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: T.muted, flexWrap: 'wrap' } },
-                h('span', null, hover.commit.author || '未知作者'),
+                h('span', null, hover.commit.author || t('unknownAuthor')),
                 h('span', null, '·'),
                 h('span', null, new Date(hover.commit.time * 1000).toLocaleString()),
                 h('span', { style: { flex: 1 } }),
@@ -1085,7 +1289,7 @@ window.__ModuleLoader__.load({
                 : null,
               hover.commit.stats
                 ? h('div', { style: { fontSize: 11, color: T.muted } },
-                    `${hover.commit.stats.files} 个文件`,
+                    t('statsFiles', { count: hover.commit.stats.files }),
                     h('span', { style: { color: T.success, marginLeft: 6 } }, `+${hover.commit.stats.additions}`),
                     h('span', { style: { color: T.error, marginLeft: 6 } }, `−${hover.commit.stats.deletions}`))
                 : null))
@@ -1111,22 +1315,253 @@ window.__ModuleLoader__.load({
       render() {
         if (this.state.error) {
           return h('div', { style: { margin: '6px 8px', padding: '6px 10px', fontSize: 10.5, color: T.error, border: `0.5px solid ${T.border}`, borderRadius: T.rSm } },
-            `卡片渲染失败：${String(this.state.error?.message ?? this.state.error)}`)
+            t('cardRenderFailed', { error: String(this.state.error?.message ?? this.state.error) }))
         }
         return this.props.children
       }
     }
 
+    const IMAGE_PATH_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'svg'])
+    function isImagePath(path) {
+      const extension = String(path).split('.').pop()?.toLowerCase()
+      return IMAGE_PATH_EXTENSIONS.has(extension)
+    }
+
+    /** Right-click menu rendered in a body-level layer (no ancestor clipping / fixed containing blocks). */
+    function openFileContextMenu({ x, y, items }) {
+      const menu = document.createElement('div')
+      menu.setAttribute('role', 'menu')
+      // DSH 0.2.2-rc.2: macOS desktop only excludes interactive controls inside declared window regions.
+      menu.setAttribute('data-window-drag-exclude', '')
+      menu.style.cssText = [
+        'position:fixed', 'z-index:9999', 'min-width:190px', 'max-width:280px', 'padding:4px',
+        'border-radius:10px', 'background:var(--dsw-alias-bg-layer-2, #1b1b20)',
+        'border:0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,.14))',
+        'box-shadow:0 18px 48px rgba(0,0,0,.35)', 'backdrop-filter:blur(24px) saturate(160%)',
+        'font-size:12px', 'color:var(--dsw-alias-label-primary, #e6e6ea)',
+        'font-family:var(--dsw-font-family, -apple-system, sans-serif)', 'line-height:1.5',
+      ].join(';')
+      menu.style.left = `${x}px`
+      menu.style.top = `${y}px`
+      const close = () => {
+        document.removeEventListener('pointerdown', onPointer, true)
+        document.removeEventListener('keydown', onKeydown)
+        window.removeEventListener('scroll', close, true)
+        window.removeEventListener('resize', close)
+        menu.remove()
+      }
+      const onPointer = event => { if (!menu.contains(event.target)) close() }
+      const onKeydown = event => { if (event.key === 'Escape') close() }
+      for (const entry of items) {
+        if (entry.separator) {
+          const line = document.createElement('div')
+          line.style.cssText = 'height:1px;margin:4px 6px;background:var(--dsw-alias-border-l2, rgba(255,255,255,.12))'
+          menu.appendChild(line)
+          continue
+        }
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.textContent = entry.label
+        button.style.cssText = [
+          'appearance:none', 'border:none', 'background:transparent', 'color:inherit', 'width:100%',
+          'text-align:left', 'cursor:pointer', 'padding:6px 10px', 'border-radius:6px', 'font:inherit',
+        ].join(';')
+        button.addEventListener('mouseenter', () => { button.style.background = 'var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,.08))' })
+        button.addEventListener('mouseleave', () => { button.style.background = 'transparent' })
+        button.addEventListener('click', () => { close(); try { entry.onClick() } catch { /* ignore */ } })
+        menu.appendChild(button)
+      }
+      document.body.appendChild(menu)
+      const bounds = menu.getBoundingClientRect()
+      menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`
+      menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`
+      document.addEventListener('pointerdown', onPointer, true)
+      document.addEventListener('keydown', onKeydown)
+      window.addEventListener('scroll', close, true)
+      window.addEventListener('resize', close)
+    }
+
     /** One worktree's file browser, mirroring the changes cards. */
-    function WorktreeFilesCard({ t, item, defaultOpen, onOpen, selectedPath, onSelect }) {
+    /* Icons: Material Icon Theme (MIT, https://github.com/material-extensions/vscode-material-icon-theme) */
+    const FILE_ICONS = {
+      "audio": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ef5350\" d=\"M16 2a14 14 0 1 0 14 14A14 14 0 0 0 16 2m6 10h-4v8a4 4 0 1 1-4-4 3.96 3.96 0 0 1 2 .555V8h6Z\"/></svg>",
+      "console": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#ff7043\" d=\"M2 2a1 1 0 0 0-1 1v10c0 .554.446 1 1 1h12c.554 0 1-.446 1-1V3a1 1 0 0 0-1-1zm0 3h12v8H2zm1 2 2 2-2 2 1 1 3-3-3-3zm5 3.5V12h5v-1.5z\"/></svg>",
+      "csharp": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#0288d1\" d=\"M30 14v-2h-2V8h-2v4h-2V8h-2v4h-2v2h2v2h-2v2h2v4h2v-4h2v4h2v-4h2v-2h-2v-2Zm-4 2h-2v-2h2Zm-12.437 6A5.57 5.57 0 0 1 8 16.437v-2.873A5.57 5.57 0 0 1 13.563 8H18V2h-4.437A11.563 11.563 0 0 0 2 13.563v2.873A11.564 11.564 0 0 0 13.563 28H18v-6Z\"/></svg>",
+      "css": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#7e57c2\" d=\"M20 18h-2v-2h-2v2c0 .193 0 .703 1.254 1.033A3.345 3.345 0 0 1 20 22h2v2h2v-2c0-.388-.562-.851-1.254-1.034C20.356 20.34 20 18.84 20 18m-3.254 2.966C14.356 20.34 14 18.84 14 18h-2v-2h-2v8h2v-2h4v2h2v-2c0-.388-.562-.851-1.254-1.034\"/><path fill=\"#7e57c2\" d=\"M24 4H4v20a4 4 0 0 0 4 4h16.16A3.84 3.84 0 0 0 28 24.16V8a4 4 0 0 0-4-4m2 14h-2v-2h-2v2c0 .193 0 .703 1.254 1.033A3.345 3.345 0 0 1 26 22v2a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2 2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2 2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2 2 2 0 0 1 2-2h2a2 2 0 0 1 2 2 2 2 0 0 1 2-2h2a2 2 0 0 1 2 2Z\"/></svg>",
+      "database": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ffca28\" d=\"M16 24c-5.525 0-10-.9-10-2v4c0 1.1 4.475 2 10 2s10-.9 10-2v-4c0 1.1-4.475 2-10 2m0-8c-5.525 0-10-.9-10-2v4c0 1.1 4.475 2 10 2s10-.9 10-2v-4c0 1.1-4.475 2-10 2m0-12C10.477 4 6 4.895 6 6v4c0 1.1 4.475 2 10 2s10-.9 10-2V6c0-1.105-4.477-2-10-2\"/></svg>",
+      "docker": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#0288d1\" d=\"M21.81 10.25c-.06-.04-.56-.43-1.64-.43-.28 0-.56.03-.84.08-.21-1.4-1.38-2.11-1.43-2.14l-.29-.17-.18.27c-.24.36-.43.77-.51 1.19-.2.8-.08 1.56.33 2.21-.49.28-1.29.35-1.46.35H2.62c-.34 0-.62.28-.62.63 0 1.15.18 2.3.58 3.38.45 1.19 1.13 2.07 2 2.61.98.6 2.59.94 4.42.94.79 0 1.61-.07 2.42-.22 1.12-.2 2.2-.59 3.19-1.16A8.3 8.3 0 0 0 16.78 16c1.05-1.17 1.67-2.5 2.12-3.65h.19c1.14 0 1.85-.46 2.24-.85.26-.24.45-.53.59-.87l.08-.24zm-17.96.99h1.76c.08 0 .16-.07.16-.16V9.5c0-.08-.07-.16-.16-.16H3.85c-.09 0-.16.07-.16.16v1.58c.01.09.07.16.16.16m2.43 0h1.76c.08 0 .16-.07.16-.16V9.5c0-.08-.07-.16-.16-.16H6.28c-.09 0-.16.07-.16.16v1.58c.01.09.07.16.16.16m2.47 0h1.75c.1 0 .17-.07.17-.16V9.5c0-.08-.06-.16-.17-.16H8.75c-.08 0-.15.07-.15.16v1.58c0 .09.06.16.15.16m2.44 0h1.77c.08 0 .15-.07.15-.16V9.5c0-.08-.06-.16-.15-.16h-1.77c-.08 0-.15.07-.15.16v1.58c0 .09.07.16.15.16M6.28 9h1.76c.08 0 .16-.09.16-.18V7.25c0-.09-.07-.16-.16-.16H6.28c-.09 0-.16.06-.16.16v1.57c.01.09.07.18.16.18m2.47 0h1.75c.1 0 .17-.09.17-.18V7.25c0-.09-.06-.16-.17-.16H8.75c-.08 0-.15.06-.15.16v1.57c0 .09.06.18.15.18m2.44 0h1.77c.08 0 .15-.09.15-.18V7.25c0-.09-.07-.16-.15-.16h-1.77c-.08 0-.15.06-.15.16v1.57c0 .09.07.18.15.18m0-2.28h1.77c.08 0 .15-.07.15-.16V5c0-.1-.07-.17-.15-.17h-1.77c-.08 0-.15.06-.15.17v1.56c0 .08.07.16.15.16m2.46 4.52h1.76c.09 0 .16-.07.16-.16V9.5c0-.08-.07-.16-.16-.16h-1.76c-.08 0-.15.07-.15.16v1.58c0 .09.07.16.15.16\"/></svg>",
+      "document": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path d=\"M0 0h24v24H0z\"/><path fill=\"#42a5f5\" d=\"M8 16h8v2H8zm0-4h8v2H8zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8zm4 18H6V4h7v5h5z\"/></svg>",
+      "file": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path d=\"m8.668 6h3.6641l-3.6641-3.668v3.668m-4.668-4.668h5.332l4 4v8c0 0.73828-0.59375 1.3359-1.332 1.3359h-8c-0.73828 0-1.332-0.59766-1.332-1.3359v-10.664c0-0.74219 0.59375-1.3359 1.332-1.3359m3.332 1.3359h-3.332v10.664h8v-6h-4.668z\" fill=\"#90a4ae\" /></svg>",
+      "folder": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path d=\"m6.922 3.768-.644-.536A1 1 0 0 0 5.638 3H2a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1H7.562a1 1 0 0 1-.64-.232\" fill=\"#90a4ae\" /></svg>",
+      "folder-open": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path d=\"M14.483 6H4.721a1 1 0 0 0-.949.684L2 12V5h12a1 1 0 0 0-1-1H7.562a1 1 0 0 1-.64-.232l-.644-.536A1 1 0 0 0 5.638 3H2a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h11l2.403-5.606A1 1 0 0 0 14.483 6\" fill=\"#90a4ae\" /></svg>",
+      "git": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#e64a19\" d=\"M13.172 2.828 11.78 4.22l1.91 1.91 2 2A2.986 2.986 0 0 1 20 10.81a3.25 3.25 0 0 1-.31 1.31l2.06 2a2.68 2.68 0 0 1 3.37.57 2.86 2.86 0 0 1 .88 2.117 3.02 3.02 0 0 1-.856 2.109A2.9 2.9 0 0 1 23 19.81a2.93 2.93 0 0 1-2.13-.87 2.694 2.694 0 0 1-.56-3.38l-2-2.06a3 3 0 0 1-.31.12V20a3 3 0 0 1 1.44 1.09 2.92 2.92 0 0 1 .56 1.72 2.88 2.88 0 0 1-.878 2.128 2.98 2.98 0 0 1-2.048.871 2.981 2.981 0 0 1-2.514-4.719A3 3 0 0 1 16 20v-6.38a2.96 2.96 0 0 1-1.44-1.09 2.9 2.9 0 0 1-.56-1.72 2.9 2.9 0 0 1 .31-1.31l-3.9-3.9-7.579 7.572a4 4 0 0 0-.001 5.658l10.342 10.342a4 4 0 0 0 5.656 0l10.344-10.344a4 4 0 0 0 0-5.656L18.828 2.828a4 4 0 0 0-5.656 0\"/></svg>",
+      "go": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#00acc1\" d=\"M2 12h4v2H2zm-2 4h6v2H0zm4 4h2v2H4zm16.954-5H14v3h3.239a4.42 4.42 0 0 1-3.531 2 2.65 2.65 0 0 1-2.053-.858 2.86 2.86 0 0 1-.628-2.28A4.515 4.515 0 0 1 15.292 13a2.73 2.73 0 0 1 1.749.584l2.962-1.185A5.6 5.6 0 0 0 15.292 10a7.526 7.526 0 0 0-7.243 6.5 5.614 5.614 0 0 0 5.659 6.5 7.526 7.526 0 0 0 7.243-6.5 6.4 6.4 0 0 0 .003-1.5\"/><path fill=\"#00acc1\" d=\"M26.292 10a7.526 7.526 0 0 0-7.243 6.5 5.614 5.614 0 0 0 5.659 6.5 7.526 7.526 0 0 0 7.243-6.5 5.614 5.614 0 0 0-5.659-6.5m2.681 6.137A4.515 4.515 0 0 1 24.708 20a2.65 2.65 0 0 1-2.053-.858 2.86 2.86 0 0 1-.628-2.28A4.515 4.515 0 0 1 26.292 13a2.65 2.65 0 0 1 2.053.858 2.86 2.86 0 0 1 .628 2.28Z\"/></svg>",
+      "graphql": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ec407a\" d=\"M6 20h20v2H6z\"/><circle cx=\"7\" cy=\"21\" r=\"3\" fill=\"#ec407a\"/><circle cx=\"16\" cy=\"27\" r=\"3\" fill=\"#ec407a\"/><circle cx=\"25\" cy=\"21\" r=\"3\" fill=\"#ec407a\"/><path fill=\"#ec407a\" d=\"M6 10h20v2H6z\"/><circle cx=\"7\" cy=\"11\" r=\"3\" fill=\"#ec407a\"/><circle cx=\"16\" cy=\"5\" r=\"3\" fill=\"#ec407a\"/><circle cx=\"25\" cy=\"11\" r=\"3\" fill=\"#ec407a\"/><path fill=\"#ec407a\" d=\"M6 12h2v10H6zm18-2h2v12h-2z\"/><path fill=\"#ec407a\" d=\"m5.014 19.41 11.674 6.866L15.674 28 4 21.134z\"/><path fill=\"#ec407a\" d=\"M26.688 21.724 15.014 28.59 14 26.866 25.674 20zM5.124 10.382l11.415-7.29 1.077 1.686L6.2 12.068z\"/><path fill=\"#ec407a\" d=\"m25.798 12.067-11.415-7.29 1.077-1.685 11.415 7.29zM6.2 19.932l11.416 7.29-1.077 1.686-11.415-7.29z\"/><path fill=\"#ec407a\" d=\"m26.875 21.619-11.415 7.29-1.077-1.687 11.415-7.289zM5.877 22.6 16.04 3.686l1.762.946L7.638 23.546z\"/><path fill=\"#ec407a\" d=\"M24.361 23.545 14.197 4.633l1.761-.947 10.165 18.913z\"/></svg>",
+      "hex": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#26a69a\" d=\"M4 8v16a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2m4 14V10h4v12Zm11.999-6L18 18.001 21 21l-3 3.001L19.999 26l3.003-3 3 2.999L28 24l-3-2.999 3-3L26.001 16l-3 3z\"/></svg>",
+      "html": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#e65100\" d=\"m4 4 2 22 10 2 10-2 2-22Zm19.72 7H11.28l.29 3h11.86l-.802 9.335L15.99 25l-6.635-1.646L8.93 19h3.02l.19 2 3.86.77 3.84-.77.29-4H8.84L8 8h16Z\"/></svg>",
+      "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#26a69a\" d=\"M8.5 6h4l-4-4zM3.875 1H9.5l4 4v8.6c0 .773-.616 1.4-1.375 1.4h-8.25c-.76 0-1.375-.627-1.375-1.4V2.4c0-.777.612-1.4 1.375-1.4M4 13.6h8V8l-2.625 2.8L8 9.4zm1.25-7.7c-.76 0-1.375.627-1.375 1.4s.616 1.4 1.375 1.4c.76 0 1.375-.627 1.375-1.4S6.009 5.9 5.25 5.9\"/></svg>",
+      "java": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#f44336\" d=\"M4 26h24v2H4zM28 4H7a1 1 0 0 0-1 1v13a4 4 0 0 0 4 4h10a4 4 0 0 0 4-4v-4h4a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2m0 8h-4V6h4Z\"/></svg>",
+      "javascript": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#ffca28\" d=\"M2 2v12h12V2zm6 6h1v4a1.003 1.003 0 0 1-1 1H7a1.003 1.003 0 0 1-1-1v-1h1v1h1zm3 0h2v1h-2v1h1a1.003 1.003 0 0 1 1 1v1a1.003 1.003 0 0 1-1 1h-2v-1h2v-1h-1a1.003 1.003 0 0 1-1-1V9a1.003 1.003 0 0 1 1-1\"/></svg>",
+      "json": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 -960 960 960\" width=\"14\" height=\"14\"><path fill=\"#f9a825\" d=\"M560-160v-80h120q17 0 28.5-11.5T720-280v-80q0-38 22-69t58-44v-14q-36-13-58-44t-22-69v-80q0-17-11.5-28.5T680-720H560v-80h120q50 0 85 35t35 85v80q0 17 11.5 28.5T840-560h40v160h-40q-17 0-28.5 11.5T800-360v80q0 50-35 85t-85 35zm-280 0q-50 0-85-35t-35-85v-80q0-17-11.5-28.5T120-400H80v-160h40q17 0 28.5-11.5T160-600v-80q0-50 35-85t85-35h120v80H280q-17 0-28.5 11.5T240-680v80q0 38-22 69t-58 44v14q36 13 58 44t22 69v80q0 17 11.5 28.5T280-240h120v80z\"/></svg>",
+      "kotlin": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><defs><linearGradient id=\"a\" x1=\"1.725\" x2=\"22.185\" y1=\"22.67\" y2=\"1.982\" gradientTransform=\"translate(1.306 1.129)scale(.89324)\" gradientUnits=\"userSpaceOnUse\"><stop offset=\"0\" stop-color=\"#7c4dff\"/><stop offset=\".5\" stop-color=\"#d500f9\"/><stop offset=\"1\" stop-color=\"#ef5350\"/></linearGradient></defs><path fill=\"url(#a)\" d=\"M2.975 2.976v18.048h18.05v-.03l-4.478-4.511-4.48-4.515 4.48-4.515 4.443-4.477z\"/></svg>",
+      "less": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#0277bd\" d=\"M8 3a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2H3v2h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h2v-2H8v-5a2 2 0 0 0-2-2 2 2 0 0 0 2-2V5h2V3m6 0a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1v2h-1a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-2v-2h2v-5a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5h-2V3z\"/></svg>",
+      "license": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#ff5722\" d=\"M8 1a5.5 5.5 0 0 0-4 9.26V15l4-1.5 4 1.5v-4.74A5.49 5.49 0 0 0 8 1m0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8m0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4\"/></svg>",
+      "lock": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ffd54f\" d=\"M25 12h-3V8a6 6 0 0 0-12 0v4H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V13a1 1 0 0 0-1-1M14 8a2 2 0 0 1 4 0v4h-4Zm2 17a4 4 0 1 1 4-4 4 4 0 0 1-4 4\"/></svg>",
+      "log": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path d=\"M0 0h24v24H0z\"/><path fill=\"#afb42b\" d=\"M19 5v9h-5v5H5V5zm0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10l6-6V5c0-1.1-.9-2-2-2m-7 11H7v-2h5zm5-4H7V8h10z\"/></svg>",
+      "makefile": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ef5350\" d=\"m29.5 24.02-1.6-.92a4.4 4.4 0 0 0 .09-.9A1.3 1.3 0 0 0 28 22a5.6 5.6 0 0 0-.1-1.1l1.6-.92a.493.493 0 0 0 .18-.68l-1.5-2.6a.45.45 0 0 0-.18-.18V6.01a2.006 2.006 0 0 0-2-2H4a2.006 2.006 0 0 0-2 2V22a2.006 2.006 0 0 0 2 2h10.53l-.03.02a.493.493 0 0 0-.18.68l1.5 2.6a.493.493 0 0 0 .68.18l1.6-.92a5.9 5.9 0 0 0 1.9 1.09v1.85a.495.495 0 0 0 .5.5h3a.495.495 0 0 0 .5-.5v-1.85a5.9 5.9 0 0 0 1.9-1.09l1.6.92a.493.493 0 0 0 .68-.18l1.5-2.6a.493.493 0 0 0-.18-.68M24 22.01a1.99 1.99 0 0 1-.88 1.65l-.18.11a2.04 2.04 0 0 1-1.88 0l-.18-.11a1.99 1.99 0 0 1-.88-1.65V22a2 2 0 0 1 .88-1.66l.18-.11a2.04 2.04 0 0 1 1.88 0l.18.11A2 2 0 0 1 24 22Zm2-4.63-.1.06a5.9 5.9 0 0 0-1.9-1.09V14.5a.495.495 0 0 0-.5-.5h-3a.495.495 0 0 0-.5.5v1.85a5.9 5.9 0 0 0-1.9 1.09l-1.6-.92a.493.493 0 0 0-.68.18l-1.5 2.6a.493.493 0 0 0 .18.68l1.6.92A5.6 5.6 0 0 0 16 22v.01L4 22V10.01h22Z\"/></svg>",
+      "markdown": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#42a5f5\" d=\"m14 10-4 3.5L6 10H4v12h4v-6l2 2 2-2v6h4V10zm12 6v-6h-4v6h-4l6 8 6-8z\"/></svg>",
+      "nodejs": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#8bc34a\" d=\"M16 20.003v2h4a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-2v-2h4v-2h-4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2v2Z\"/><path fill=\"#8bc34a\" d=\"m16 3.003-12 7v14l4 2h6v-13.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v11.5H8l-2-1.034V11.15l10-5.833 10 5.833v11.703l-10 5.833-1.745-1.022L13 29.253l3 1.75 12-7v-14Z\"/></svg>",
+      "npm": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#e53935\" d=\"M4 4v24h24V4Zm20 20h-4V12h-4v12H8V8h16Z\"/></svg>",
+      "pdf": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#ef5350\" d=\"M13 9h5.5L13 3.5zM6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m4.93 10.44c.41.9.93 1.64 1.53 2.15l.41.32c-.87.16-2.07.44-3.34.93l-.11.04.5-1.04c.45-.87.78-1.66 1.01-2.4m6.48 3.81c.18-.18.27-.41.28-.66.03-.2-.02-.39-.12-.55-.29-.47-1.04-.69-2.28-.69l-1.29.07-.87-.58c-.63-.52-1.2-1.43-1.6-2.56l.04-.14c.33-1.33.64-2.94-.02-3.6a.85.85 0 0 0-.61-.24h-.24c-.37 0-.7.39-.79.77-.37 1.33-.15 2.06.22 3.27v.01c-.25.88-.57 1.9-1.08 2.93l-.96 1.8-.89.49c-1.2.75-1.77 1.59-1.88 2.12-.04.19-.02.36.05.54l.03.05.48.31.44.11c.81 0 1.73-.95 2.97-3.07l.18-.07c1.03-.33 2.31-.56 4.03-.75 1.03.51 2.24.74 3 .74.44 0 .74-.11.91-.3m-.41-.71.09.11c-.01.1-.04.11-.09.13h-.04l-.19.02c-.46 0-1.17-.19-1.9-.51.09-.1.13-.1.23-.1 1.4 0 1.8.25 1.9.35M7.83 17c-.65 1.19-1.24 1.85-1.69 2 .05-.38.5-1.04 1.21-1.69zm3.02-6.91c-.23-.9-.24-1.63-.07-2.05l.07-.12.15.05c.17.24.19.56.09 1.1l-.03.16-.16.82z\"/></svg>",
+      "php": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#1e88e5\" d=\"M12 18.08c-6.63 0-12-2.72-12-6.08s5.37-6.08 12-6.08S24 8.64 24 12s-5.37 6.08-12 6.08m-5.19-7.95c.54 0 .91.1 1.09.31.18.2.22.56.13 1.03-.1.53-.29.87-.58 1.09q-.42.33-1.29.33h-.87l.53-2.76zm-3.5 5.55h1.44l.34-1.75h1.23c.54 0 .98-.06 1.33-.17.35-.12.67-.31.96-.58.24-.22.43-.46.58-.73.15-.26.26-.56.31-.88.16-.78.05-1.39-.33-1.82-.39-.44-.99-.65-1.82-.65H4.59zm7.25-8.33-1.28 6.58h1.42l.74-3.77h1.14c.36 0 .6.06.71.18s.13.34.07.66l-.57 2.93h1.45l.59-3.07c.13-.62.03-1.07-.27-1.36-.3-.27-.85-.4-1.65-.4h-1.27L12 7.35zM18 10.13c.55 0 .91.1 1.09.31.18.2.22.56.13 1.03-.1.53-.29.87-.57 1.09-.29.22-.72.33-1.3.33h-.85l.5-2.76zm-3.5 5.55h1.44l.34-1.75h1.22c.55 0 1-.06 1.35-.17.35-.12.65-.31.95-.58.24-.22.44-.46.58-.73.15-.26.26-.56.32-.88.15-.78.04-1.39-.34-1.82-.36-.44-.99-.65-1.82-.65h-2.75z\"/></svg>",
+      "pnpm": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#e0e0e0\" d=\"M2 22h8v8H2zm10 0h8v8h-8zm10 0h8v8h-8zM12 12h8v8h-8z\"/><path fill=\"#ffb300\" d=\"M2 2h8v8H2zm10 0h8v8h-8zm10 0h8v8h-8zm0 10h8v8h-8z\"/></svg>",
+      "prettier": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#f44336\" d=\"M2 8h4v1H2zm0 6h4v1H2zm9-10h3v1h-3zM2 2h3v1H2z\"/><path fill=\"#f9a825\" d=\"M9 2h3v1H9zm1 4h4v1h-4zm-5 6h1v1H5zm-3-2h6v1H2z\"/><path fill=\"#26a69a\" d=\"M2 12h3v1H2zm7-4h5v1H9zM2 4h4v1H2zm3-2h4v1H5z\"/><path fill=\"#ba68c8\" d=\"M2 6h3v1H2zm7-2h2v1H9zm-1 6h4v1H8z\"/></svg>",
+      "python": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#0288d1\" d=\"M9.86 2A2.86 2.86 0 0 0 7 4.86v1.68h4.29c.39 0 .71.57.71.96H4.86A2.86 2.86 0 0 0 2 10.36v3.781a2.86 2.86 0 0 0 2.86 2.86h1.18v-2.68a2.85 2.85 0 0 1 2.85-2.86h5.25c1.58 0 2.86-1.271 2.86-2.851V4.86A2.86 2.86 0 0 0 14.14 2zm-.72 1.61c.4 0 .72.12.72.71s-.32.891-.72.891c-.39 0-.71-.3-.71-.89s.32-.711.71-.711\"/><path fill=\"#fdd835\" d=\"M17.959 7v2.68a2.85 2.85 0 0 1-2.85 2.859H9.86A2.85 2.85 0 0 0 7 15.389v3.75a2.86 2.86 0 0 0 2.86 2.86h4.28A2.86 2.86 0 0 0 17 19.14v-1.68h-4.291c-.39 0-.709-.57-.709-.96h7.14A2.86 2.86 0 0 0 22 13.64V9.86A2.86 2.86 0 0 0 19.14 7zM8.32 11.513l-.004.004.038-.004zm6.54 7.276c.39 0 .71.3.71.89a.71.71 0 0 1-.71.71c-.4 0-.72-.12-.72-.71s.32-.89.72-.89\"/></svg>",
+      "react": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#00bcd4\" d=\"M16 12c7.444 0 12 2.59 12 4s-4.556 4-12 4-12-2.59-12-4 4.556-4 12-4m0-2c-7.732 0-14 2.686-14 6s6.268 6 14 6 14-2.686 14-6-6.268-6-14-6\"/><path fill=\"#00bcd4\" d=\"M16 14a2 2 0 1 0 2 2 2 2 0 0 0-2-2\"/><path fill=\"#00bcd4\" d=\"M10.458 5.507c2.017 0 5.937 3.177 9.006 8.493 3.722 6.447 3.757 11.687 2.536 12.392a.9.9 0 0 1-.457.1c-2.017 0-5.938-3.176-9.007-8.492C8.814 11.553 8.779 6.313 10 5.608a.9.9 0 0 1 .458-.1m-.001-2A2.87 2.87 0 0 0 9 3.875C6.13 5.532 6.938 12.304 10.804 19c3.284 5.69 7.72 9.493 10.74 9.493A2.87 2.87 0 0 0 23 28.124c2.87-1.656 2.062-8.428-1.804-15.124-3.284-5.69-7.72-9.493-10.74-9.493Z\"/><path fill=\"#00bcd4\" d=\"M21.543 5.507a.9.9 0 0 1 .457.1c1.221.706 1.186 5.946-2.536 12.393-3.07 5.316-6.99 8.493-9.007 8.493a.9.9 0 0 1-.457-.1C8.779 25.686 8.814 20.446 12.536 14c3.07-5.316 6.99-8.493 9.007-8.493m0-2c-3.02 0-7.455 3.804-10.74 9.493C6.939 19.696 6.13 26.468 9 28.124a2.87 2.87 0 0 0 1.457.369c3.02 0 7.455-3.804 10.74-9.493C25.061 12.304 25.87 5.532 23 3.876a2.87 2.87 0 0 0-1.457-.369\"/></svg>",
+      "react_ts": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#0288d1\" d=\"M16 12c7.444 0 12 2.59 12 4s-4.556 4-12 4-12-2.59-12-4 4.556-4 12-4m0-2c-7.732 0-14 2.686-14 6s6.268 6 14 6 14-2.686 14-6-6.268-6-14-6\"/><path fill=\"#0288d1\" d=\"M16 14a2 2 0 1 0 2 2 2 2 0 0 0-2-2\"/><path fill=\"#0288d1\" d=\"M10.458 5.507c2.017 0 5.937 3.177 9.006 8.493 3.722 6.447 3.757 11.687 2.536 12.392a.9.9 0 0 1-.457.1c-2.017 0-5.938-3.176-9.007-8.492C8.814 11.553 8.779 6.313 10 5.608a.9.9 0 0 1 .458-.1m-.001-2A2.87 2.87 0 0 0 9 3.875C6.13 5.532 6.938 12.304 10.804 19c3.284 5.69 7.72 9.493 10.74 9.493A2.87 2.87 0 0 0 23 28.124c2.87-1.656 2.062-8.428-1.804-15.124-3.284-5.69-7.72-9.493-10.74-9.493Z\"/><path fill=\"#0288d1\" d=\"M21.543 5.507a.9.9 0 0 1 .457.1c1.221.706 1.186 5.946-2.536 12.393-3.07 5.316-6.99 8.493-9.007 8.493a.9.9 0 0 1-.457-.1C8.779 25.686 8.814 20.446 12.536 14c3.07-5.316 6.99-8.493 9.007-8.493m0-2c-3.02 0-7.455 3.804-10.74 9.493C6.939 19.696 6.13 26.468 9 28.124a2.87 2.87 0 0 0 1.457.369c3.02 0 7.455-3.804 10.74-9.493C25.061 12.304 25.87 5.532 23 3.876a2.87 2.87 0 0 0-1.457-.369\"/></svg>",
+      "readme": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path d=\"M0 0h24v24H0z\"/><path fill=\"#42a5f5\" d=\"M8 1C4.136 1 1 4.136 1 8s3.136 7 7 7 7-3.136 7-7-3.136-7-7-7m1 11H7V7.5h2zm0-6H7V4h2z\"/></svg>",
+      "ruby": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#f44336\" d=\"M18.041 3.177c2.24.382 2.879 1.919 2.843 3.527V6.67l-1.013 13.266-13.132.897h.008c-1.093-.044-3.518-.151-3.634-3.545l1.217-2.222 2.462 5.74 2.097-6.77-.045.009.018-.018 6.85 2.186L13.945 9.3l6.53-.409-5.144-4.212 2.71-1.51v.009M3.113 17.252v.017zM6.916 6.874c2.63-2.622 6.033-4.168 7.34-2.844 1.297 1.306-.072 4.523-2.702 7.135-2.666 2.613-6.015 4.248-7.322 2.933-1.306-1.324.036-4.612 2.675-7.224z\"/></svg>",
+      "rust": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ff7043\" d=\"m30 12-4-2V6h-4l-2-4-4 2-4-2-2 4H6v4l-4 2 2 4-2 4 4 2v4h4l2 4 4-2 4 2 2-4h4v-4l4-2-2-4ZM6 16a9.9 9.9 0 0 1 .842-4H10v8H6.842A9.9 9.9 0 0 1 6 16m10 10a9.98 9.98 0 0 1-7.978-4H16v-2h-2v-2h4c.819.819.297 2.308 1.179 3.37a1.89 1.89 0 0 0 1.46.63h3.34A9.98 9.98 0 0 1 16 26m-2-12v-2h4a1 1 0 0 1 0 2Zm11.158 6H24a2.006 2.006 0 0 1-2-2 2 2 0 0 0-2-2 3 3 0 0 0 3-3q0-.08-.004-.161A3.115 3.115 0 0 0 19.83 10H8.022a9.986 9.986 0 0 1 17.136 10\"/></svg>",
+      "sass": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ec407a\" d=\"M27.837 5.673a4.33 4.33 0 0 0-2.293-2.701c-2.362-1.261-6.11-1.298-9.548-.092a26.3 26.3 0 0 0-8.76 4.966c-2.752 2.542-3.438 4.925-3.189 6.194.523 2.668 3.274 4.539 5.485 6.042.418.284.822.559 1.175.816-1.429.76-4.261 2.444-5.088 4.248a3.88 3.88 0 0 0-.118 3.332A2.37 2.37 0 0 0 6.869 29.8a5.6 5.6 0 0 0 1.49.2 6.35 6.35 0 0 0 5.19-2.856 6.74 6.74 0 0 0 .864-5.382 7.3 7.3 0 0 1 2.044-.03 3.92 3.92 0 0 1 2.816 1.311 1.82 1.82 0 0 1 .423 1.262 1.55 1.55 0 0 1-.772 1.05c-.234.14-.586.355-.504.803.036.194.198.633.894.512a2.93 2.93 0 0 0 2.145-2.651 4 4 0 0 0-1.197-2.904 5.94 5.94 0 0 0-4.396-1.626 10.6 10.6 0 0 0-2.672.304 20 20 0 0 0-2.203-1.846c-1.712-1.3-3.33-2.529-3.235-4.26.125-2.263 2.468-4.532 6.964-6.744 4.016-1.976 7.254-2.037 8.944-1.438a2 2 0 0 1 1.204.883 2.77 2.77 0 0 1-.36 2.47 9.71 9.71 0 0 1-7.425 4.304 3.86 3.86 0 0 1-3.238-.757c-.278-.302-.593-.645-1.074-.383q-.565.31-.225 1.189a3.9 3.9 0 0 0 2.407 1.92 11.7 11.7 0 0 0 7.128-.671c3.527-1.35 6.681-5.202 5.756-8.787M11.895 24.475a4 4 0 0 1-.192.468 4.5 4.5 0 0 1-.753 1.081 2.83 2.83 0 0 1-2.533 1.107c-.056-.032-.078-.146-.085-.193a3.28 3.28 0 0 1 1.076-2.284 11.3 11.3 0 0 1 2.644-1.933 3.85 3.85 0 0 1-.157 1.754\"/></svg>",
+      "settings": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path d=\"M0 0h24v24H0z\"/><path fill=\"#42a5f5\" d=\"M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.6.6 0 0 0-.18-.03c-.17 0-.34.09-.43.25l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46a.5.5 0 0 0 .61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1q.09.03.18.03c.17 0 .34-.09.43-.25l2-3.46c.12-.22.07-.49-.12-.64zm-1.98-1.71c.04.31.05.52.05.73s-.02.43-.05.73l-.14 1.13.89.7 1.08.84-.7 1.21-1.27-.51-1.04-.42-.9.68c-.43.32-.84.56-1.25.73l-1.06.43-.16 1.13-.2 1.35h-1.4l-.19-1.35-.16-1.13-1.06-.43c-.43-.18-.83-.41-1.23-.71l-.91-.7-1.06.43-1.27.51-.7-1.21 1.08-.84.89-.7-.14-1.13c-.03-.31-.05-.54-.05-.74s.02-.43.05-.73l.14-1.13-.89-.7-1.08-.84.7-1.21 1.27.51 1.04.42.9-.68c.43-.32.84-.56 1.25-.73l1.06-.43.16-1.13.2-1.35h1.39l.19 1.35.16 1.13 1.06.43c.43.18.83.41 1.23.71l.91.7 1.06-.43 1.27-.51.7 1.21-1.07.85-.89.7zM12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4m0 6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2\"/></svg>",
+      "svelte": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 300\" width=\"14\" height=\"14\"><path fill=\"#ff5722\" d=\"M175.94 24.328c-13.037.252-26.009 3.872-37.471 11.174L79.912 72.818a67.13 67.13 0 0 0-30.355 44.906 70.8 70.8 0 0 0 6.959 45.445 67.2 67.2 0 0 0-10.035 25.102 71.54 71.54 0 0 0 12.236 54.156c23.351 33.41 69.468 43.311 102.81 22.07l58.559-37.158a67.36 67.36 0 0 0 30.355-44.906 70.77 70.77 0 0 0-6.982-45.422 67.65 67.65 0 0 0 10.059-25.102 71.63 71.63 0 0 0-12.236-54.156v-.18c-15.324-21.925-40.453-33.727-65.342-33.246zm5.137 28.68a46.5 46.5 0 0 1 36.09 19.969 42.98 42.98 0 0 1 7.365 32.557 45 45 0 0 1-1.393 5.455l-1.123 3.37-2.986-2.247a75.9 75.9 0 0 0-22.902-11.45l-2.244-.651.201-2.246a13.16 13.16 0 0 0-2.379-8.711 13.99 13.99 0 0 0-14.953-5.412 12.8 12.8 0 0 0-3.594 1.572l-58.578 37.25a12.24 12.24 0 0 0-5.502 8.15 13.1 13.1 0 0 0 2.246 9.834 14.03 14.03 0 0 0 14.93 5.569 13.5 13.5 0 0 0 3.594-1.573l22.453-14.234a41.8 41.8 0 0 1 11.898-5.232 46.48 46.48 0 0 1 49.914 18.502 43.02 43.02 0 0 1 7.363 32.557 40.42 40.42 0 0 1-18.254 27.078l-58.58 37.316a43 43 0 0 1-11.898 5.23A46.545 46.545 0 0 1 82.81 227.14a42.98 42.98 0 0 1-7.341-32.557 38 38 0 0 1 1.39-5.41l1.102-3.37 3.008 2.246a75.9 75.9 0 0 0 22.836 11.361l2.244.65-.201 2.247a13.25 13.25 0 0 0 2.447 8.644 14.03 14.03 0 0 0 15.043 5.569 13.1 13.1 0 0 0 3.592-1.573l58.467-37.316a12.17 12.17 0 0 0 5.502-8.173 12.96 12.96 0 0 0-2.246-9.811 14.03 14.03 0 0 0-15.043-5.568 12.8 12.8 0 0 0-3.592 1.57l-22.453 14.258a42.9 42.9 0 0 1-11.877 5.209 46.52 46.52 0 0 1-49.846-18.5 43.02 43.02 0 0 1-7.297-32.557A40.42 40.42 0 0 1 96.798 96.98l58.646-37.316a42.8 42.8 0 0 1 11.811-5.21 46.5 46.5 0 0 1 13.822-1.444z\"/></svg>",
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ffb300\" d=\"M29.168 14.03a2.7 2.7 0 0 0-1.968-.83 2.51 2.51 0 0 0-1.929.8h-4.443l3.078-3.078a2.835 2.835 0 0 0 2.857-2.842 2.6 2.6 0 0 0-.831-1.969 2.82 2.82 0 0 0-2.014-.788 2.67 2.67 0 0 0-1.968.788 2.36 2.36 0 0 0-.812 1.922L18 11.17V6.726a2.51 2.51 0 0 0 .8-1.929 2.7 2.7 0 0 0-.832-1.968 2.745 2.745 0 0 0-3.936 0 2.7 2.7 0 0 0-.832 1.968 2.51 2.51 0 0 0 .8 1.93v4.443l-3.138-3.138a2.36 2.36 0 0 0-.812-1.922 2.66 2.66 0 0 0-1.968-.788 2.83 2.83 0 0 0-2.014.788 2.6 2.6 0 0 0-.831 1.969 2.74 2.74 0 0 0 .831 2.013 2.8 2.8 0 0 0 2.026.829l3.078 3.078H6.729a2.51 2.51 0 0 0-1.929-.8 2.7 2.7 0 0 0-1.968.831 2.745 2.745 0 0 0 0 3.937 2.7 2.7 0 0 0 1.968.832 2.51 2.51 0 0 0 1.929-.8h4.443l-3.078 3.077a2.835 2.835 0 0 0-2.857 2.842 2.6 2.6 0 0 0 .831 1.969 2.82 2.82 0 0 0 2.014.788 2.67 2.67 0 0 0 1.968-.788 2.36 2.36 0 0 0 .812-1.922L14 20.827v4.444a2.51 2.51 0 0 0-.8 1.929 2.784 2.784 0 0 0 4.768 1.968A2.7 2.7 0 0 0 18.8 27.2a2.51 2.51 0 0 0-.8-1.929v-4.444l3.138 3.138a2.36 2.36 0 0 0 .812 1.922 2.66 2.66 0 0 0 1.968.788 2.83 2.83 0 0 0 2.014-.788 2.6 2.6 0 0 0 .831-1.969 2.74 2.74 0 0 0-.831-2.013 2.8 2.8 0 0 0-2.026-.829L20.828 18h4.443a2.51 2.51 0 0 0 1.93.8 2.784 2.784 0 0 0 1.967-4.769Z\"/></svg>",
+      "swift": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#ff6e40\" d=\"M17.087 19.721c-2.36 1.36-5.59 1.5-8.86.1a13.8 13.8 0 0 1-6.23-5.32c.67.55 1.46 1 2.3 1.4 3.37 1.57 6.73 1.46 9.1 0-3.37-2.59-6.24-5.96-8.37-8.71-.45-.45-.78-1.01-1.12-1.51 8.28 6.05 7.92 7.59 2.41-1.01 4.89 4.94 9.43 7.74 9.43 7.74.16.09.25.16.36.22.1-.25.19-.51.26-.78.79-2.85-.11-6.12-2.08-8.81 4.55 2.75 7.25 7.91 6.12 12.24-.03.11-.06.22-.05.39 2.24 2.83 1.64 5.78 1.35 5.22-1.21-2.39-3.48-1.65-4.62-1.17\"/></svg>",
+      "table": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#8bc34a\" d=\"M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m7 1.5V9h5.5zm4 7.5h-4v2h1l-2 1.67L10 13h1v-2H7v2h1l3 2.5L8 18H7v2h4v-2h-1l2-1.67L14 18h-1v2h4v-2h-1l-3-2.5 3-2.5h1z\"/></svg>",
+      "toml": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#cfd8dc\" d=\"M4 6V4h8v2H9v7H7V6z\"/><path fill=\"#ef5350\" d=\"M4 1v1H2v12h2v1H1V1zm8 0v1h2v12h-2v1h3V1z\"/></svg>",
+      "tsconfig": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#757575\" d=\"M15 2H6a2.006 2.006 0 0 0-2 2v22a2.006 2.006 0 0 0 2 2h6v-4H6v-2h6v-2H6v-2h6v-2H6v-2h6v-2h2V4l8 8h2v-1Z\" data-mit-no-recolor=\"true\"/><path fill=\"#0288d1\" d=\"M12 12v18h18V12Zm8 6h-2v8h-2v-8h-2v-2h6Zm8 0h-4v2h2a2.006 2.006 0 0 1 2 2v2a2.006 2.006 0 0 1-2 2h-4v-2h4v-2h-2a2.006 2.006 0 0 1-2-2v-2a2.006 2.006 0 0 1 2-2h4Z\"/></svg>",
+      "tune": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#fbc02d\" d=\"M12 10h10v2H12z\"/><path fill=\"#fbc02d\" d=\"M16 4h2v8h-2zm4 18h10v2H20zm4 2h2v4h-2zm0-20h2v14h-2zM2 18h10v2H2z\"/><path fill=\"#fbc02d\" d=\"M6 18h2v10H6zM6 4h2v10H6zm10 12h2v12h-2z\"/></svg>",
+      "typescript": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"14\" height=\"14\"><path fill=\"#0288d1\" d=\"M2 2v12h12V2zm4 6h3v1H8v4H7V9H6zm5 0h2v1h-2v1h1a1.003 1.003 0 0 1 1 1v1a1.003 1.003 0 0 1-1 1h-2v-1h2v-1h-1a1.003 1.003 0 0 1-1-1V9a1.003 1.003 0 0 1 1-1\"/></svg>",
+      "video": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#ff9800\" d=\"m24 6 2 6h-4l-2-6h-3l2 6h-4l-2-6h-3l2 6H8L6 6H5a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h22a3 3 0 0 0 3-3V6Z\"/></svg>",
+      "vite": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#a0f\" d=\"M29.313 12h-6.664a1.427 1.427 0 0 1-1.1-2.24l4.398-6.676A.703.703 0 0 0 25.397 2H8.428a.62.62 0 0 0-.55.289l-5.77 8.627A.703.703 0 0 0 2.658 12h8.175a1.427 1.427 0 0 1 1.099 2.24l-4.48 6.676A.702.702 0 0 0 8 22l6.695.002A1.34 1.34 0 0 1 16 23.375v5.934a.652.652 0 0 0 1.168.433l12.694-16.586a.725.725 0 0 0-.55-1.156\"/></svg>",
+      "vue": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#41b883\" d=\"M1.791 3.851 12 21.471 22.209 3.936V3.85H18.24l-6.18 10.616L5.906 3.851z\"/><path fill=\"#35495e\" d=\"m5.907 3.851 6.152 10.617L18.24 3.851h-3.723L12.084 8.03 9.66 3.85z\"/></svg>",
+      "webassembly": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#7c4dff\" d=\"M22 18h4v4h-4z\"/><path fill=\"#7c4dff\" d=\"M20 2a4 4 0 0 1-8 0H2v28h28V2Zm-2 24h-2v2h-4v-2h-2v2H6v-2H4V16h2v10h4V16h2v10h4V16h2Zm10 2h-2v-4h-4v4h-2V18h2v-2h4v2h2Z\"/></svg>",
+      "xml": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#8bc34a\" d=\"M13 9h5.5L13 3.5zM6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4c0-1.11.89-2 2-2m.12 13.5 3.74 3.74 1.42-1.41-2.33-2.33 2.33-2.33-1.42-1.41zm11.16 0-3.74-3.74-1.42 1.41 2.33 2.33-2.33 2.33 1.42 1.41z\"/></svg>",
+      "yaml": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#ff5252\" d=\"M13 9h5.5L13 3.5zM6 2h8l6 6v12c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2m12 16v-2H9v2zm-4-4v-2H6v2z\"/></svg>",
+      "yarn": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"14\" height=\"14\"><path fill=\"#0288d1\" d=\"M27.575 23.967a9.9 9.9 0 0 0-3.751 1.726 22.6 22.6 0 0 1-5.537 2.504 1.55 1.55 0 0 1-.931.52 59 59 0 0 1-6.11.548c-1.102.008-1.777-.282-1.965-.735a1.49 1.49 0 0 1 .82-1.965 3.6 3.6 0 0 1-.486-.359c-.163-.162-.334-.487-.385-.367-.213.52-.324 1.794-.897 2.366-.786.795-2.273.53-3.153.069-.965-.513.069-1.718.069-1.718a.69.69 0 0 1-.94-.324 4.6 4.6 0 0 1-.632-2.794 5.2 5.2 0 0 1 1.674-2.76 8.84 8.84 0 0 1 .624-4.17 9.9 9.9 0 0 1 3-3.469S7.136 11.015 7.82 9.177c.444-1.196.623-1.187.769-1.239a3.44 3.44 0 0 0 1.375-.811 4.99 4.99 0 0 1 4.178-1.607s1.094-3.357 2.12-2.7a17.4 17.4 0 0 1 1.452 2.735s1.213-.71 1.35-.445a10.74 10.74 0 0 1 .495 5.81 13.3 13.3 0 0 1-2.46 5.127c-.129.214 1.47.889 2.477 3.683.932 2.554.103 4.699.248 4.938.026.043.034.06.034.06s1.068.085 3.213-1.24a8.05 8.05 0 0 1 4.05-1.52 1.026 1.026 0 0 1 .453 2Z\"/></svg>",
+      "zip": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"14\" height=\"14\"><path fill=\"#afb42b\" d=\"M14 17h-2v-2h-2v-2h2v2h2m0-6h-2v2h2v2h-2v-2h-2V9h2V7h-2V5h2v2h2m5-4H5c-1.11 0-2 .89-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2\"/></svg>",
+    }
+    const FILE_EXTENSION_ICONS = {
+      "md": "markdown",
+      "markdown": "markdown",
+      "json": "json",
+      "jsonc": "json",
+      "js": "javascript",
+      "mjs": "javascript",
+      "cjs": "javascript",
+      "jsx": "react",
+      "ts": "typescript",
+      "mts": "typescript",
+      "cts": "typescript",
+      "tsx": "react_ts",
+      "css": "css",
+      "scss": "sass",
+      "sass": "sass",
+      "less": "less",
+      "html": "html",
+      "htm": "html",
+      "vue": "vue",
+      "svelte": "svelte",
+      "py": "python",
+      "go": "go",
+      "rs": "rust",
+      "java": "java",
+      "kt": "kotlin",
+      "rb": "ruby",
+      "php": "php",
+      "cs": "csharp",
+      "swift": "swift",
+      "sh": "console",
+      "bash": "console",
+      "zsh": "console",
+      "fish": "console",
+      "yml": "yaml",
+      "yaml": "yaml",
+      "toml": "toml",
+      "ini": "settings",
+      "conf": "settings",
+      "xml": "xml",
+      "sql": "database",
+      "graphql": "graphql",
+      "gql": "graphql",
+      "csv": "table",
+      "txt": "document",
+      "log": "log",
+      "lock": "lock",
+      "pdf": "pdf",
+      "png": "image",
+      "jpg": "image",
+      "jpeg": "image",
+      "gif": "image",
+      "webp": "image",
+      "bmp": "image",
+      "ico": "image",
+      "avif": "image",
+      "svg": "svg",
+      "mp3": "audio",
+      "wav": "audio",
+      "ogg": "video",
+      "flac": "audio",
+      "m4a": "audio",
+      "mp4": "video",
+      "webm": "video",
+      "mov": "video",
+      "m4v": "video",
+      "ogv": "video",
+      "zip": "zip",
+      "tar": "zip",
+      "gz": "zip",
+      "tgz": "zip",
+      "bz2": "zip",
+      "xz": "zip",
+      "7z": "zip",
+      "rar": "zip",
+      "db": "database",
+      "sqlite": "database",
+      "wasm": "webassembly",
+      "bin": "hex",
+      "env": "tune",
+    }
+    const FILE_NAME_ICONS = {
+      ".gitignore": "git",
+      ".gitattributes": "git",
+      ".gitmodules": "git",
+      "dockerfile": "docker",
+      "makefile": "makefile",
+      "license": "license",
+      "readme.md": "readme",
+      "package.json": "nodejs",
+      "pnpm-lock.yaml": "pnpm",
+      "yarn.lock": "yarn",
+      ".npmrc": "npm",
+      ".prettierrc": "prettier",
+      "tsconfig.json": "tsconfig",
+      "vite.config.ts": "vite",
+    }
+    const FOLDER_ICON = "folder"
+    const FOLDER_OPEN_ICON = "folder-open"
+
+    function FileGlyph({ name, kind, expanded }) {
+      const baseName = String(name ?? '').toLowerCase()
+      const extension = baseName.includes('.') ? baseName.slice(baseName.lastIndexOf('.') + 1) : ''
+      const icon = kind === 'dir'
+        ? (expanded ? FOLDER_OPEN_ICON : FOLDER_ICON)
+        : (FILE_NAME_ICONS[baseName] ?? FILE_EXTENSION_ICONS[extension] ?? 'file')
+      const markup = FILE_ICONS[icon] ?? FILE_ICONS.file
+      return h('span', {
+        style: { width: 14, height: 14, flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
+        dangerouslySetInnerHTML: { __html: markup },
+      })
+    }
+
+    /** One worktree's file browser: lazy filesystem tree (all files, icons, statuses). */
+    function WorktreeFilesCard({ t, item, defaultOpen, onOpen, selectedPath, onSelect, onNotify, visible = true }) {
       const [open, setOpen] = useState(defaultOpen)
       const [expandedDirs, setExpandedDirs] = useState(() => new Set())
+      const [dirs, setDirs] = useState({})
       const [hoveredKey, setHoveredKey] = useState(undefined)
       const [version, setVersion] = useState(0)
-      const files = useFiles({ path: item.path, id: item.path }, version, open)
-      const [status, refreshStatus] = useStatusAt(item.path, open)
-      const refreshFiles = () => { setVersion(value => value + 1); refreshStatus() }
-      const entries = Array.isArray(files.files) ? files.files : []
+      const [status, refreshStatus] = useStatusAt(item.path, open && visible)
       const statusByPath = useMemo(() => {
         const map = new Map()
         for (const file of [...(status.data?.staged ?? []), ...(status.data?.unstaged ?? []), ...(status.data?.untracked ?? [])]) {
@@ -1135,15 +1570,124 @@ window.__ModuleLoader__.load({
         return map
       }, [status.data])
       const dirStatusByPath = useMemo(() => aggregateDirStatus(statusByPath), [statusByPath])
-      const tree = useMemo(() => fileRows(entries.map(path => ({ path }))), [files.files])
+      const loadDir = useCallback(async dir => {
+        setDirs(previous => ({ ...previous, [dir]: { phase: 'loading', entries: previous[dir]?.entries ?? [] } }))
+        try {
+          const data = await api('/fs/list', { path: item.path, dir })
+          setDirs(previous => ({ ...previous, [dir]: { phase: 'ready', entries: Array.isArray(data?.entries) ? data.entries : [], truncated: Boolean(data?.truncated) } }))
+        } catch (error) {
+          setDirs(previous => ({ ...previous, [dir]: { phase: 'error', entries: [], error: String(error?.message ?? error) } }))
+        }
+      }, [item.path])
+      useEffect(() => { if (open && visible) loadDir('') }, [open, visible, loadDir, version])
+      const refreshFiles = () => { setVersion(value => value + 1); refreshStatus() }
       const toggleDir = path => setExpandedDirs(previous => {
         const next = new Set(previous)
-        if (next.has(path)) next.delete(path); else next.add(path)
+        if (next.has(path)) { next.delete(path); return next }
+        next.add(path)
+        if (!dirs[path] || dirs[path].phase === 'error') loadDir(path)
         return next
       })
+      const rootEntries = dirs['']?.entries ?? []
+      const rows = []
+      const walk = (dirPath, depth) => {
+        const node = dirs[dirPath]
+        if (!node) return
+        if (node.phase === 'loading' && node.entries.length === 0) {
+          rows.push(h('div', { key: `${dirPath}:loading`, style: { fontSize: 10.5, color: T.muted, padding: `3px 8px 3px ${10 + depth * 13}px` } }, t('filesLoading')))
+          return
+        }
+        if (node.phase === 'error') {
+          rows.push(h('div', { key: `${dirPath}:error`, style: { fontSize: 10.5, color: T.error, padding: `3px 8px 3px ${10 + depth * 13}px` } }, node.error))
+          return
+        }
+        for (const entry of node.entries) {
+          const isDir = entry.kind === 'dir'
+          const statusLetter = isDir ? dirStatusByPath.get(entry.path) : statusByPath.get(entry.path)
+          const expanded = isDir && expandedDirs.has(entry.path)
+          const selected = !isDir && selectedPath === entry.path
+          rows.push(h('div', {
+            key: entry.path,
+            title: entry.path,
+            onClick: () => { if (isDir) toggleDir(entry.path); else onOpen({ path: entry.path }, item.path) },
+            style: {
+              display: 'flex', alignItems: 'center', gap: 5, minHeight: 21, margin: '0 4px',
+              padding: `1px 6px 1px ${8 + depth * 13}px`, borderRadius: T.rSm, cursor: 'pointer',
+              background: selected ? T.selected : 'transparent',
+              color: statusLetter ? (STATUS_COLOR[statusLetter] ?? T.ink2) : T.ink2,
+              fontSize: 12,
+            },
+            onMouseEnter: event => { if (!selected) event.currentTarget.style.background = T.hover; setHoveredKey(entry.path) },
+            onMouseLeave: event => { if (!selected) event.currentTarget.style.background = 'transparent'; if (hoveredKey === entry.path) setHoveredKey(undefined) },
+            onContextMenu: event => { event.preventDefault(); event.stopPropagation(); openFileContextMenu({ x: event.clientX, y: event.clientY, items: menuItems(entry, isDir) }) },
+          },
+            isDir ? h(Chevron, { open: expanded, size: 8 }) : h('span', { style: { width: 8, flex: '0 0 8px' } }),
+            h(FileGlyph, { name: entry.name, kind: entry.kind, expanded }),
+            h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, entry.name),
+            statusLetter ? h('span', { style: { fontSize: 10, fontWeight: 700, color: STATUS_COLOR[statusLetter] ?? T.subtle } }, statusLetter) : null))
+          if (isDir && expanded) walk(entry.path, depth + 1)
+        }
+        if (node.truncated) rows.push(h('div', { key: `${dirPath}:truncated`, style: { fontSize: 10, color: T.subtle, padding: `2px 8px 2px ${10 + depth * 13}px` } }, '…'))
+      }
+      walk('', 0)
+      const menuItems = (entry, isDir) => {
+        const root = item.path.replace(/\/$/, '')
+        const absolute = `${root}/${entry.path}`
+        const rawUrl = `/git-assistant/api/raw?path=${encodeURIComponent(item.path)}&file=${encodeURIComponent(entry.path)}`
+        const notify = (message, kind) => onNotify?.(message, kind)
+        const copy = async (text, done) => {
+          try { await navigator.clipboard.writeText(text); notify(done) } catch { notify(t('actionFailed'), 'error') }
+        }
+        const copyImage = async () => {
+          try {
+            const response = await fetch(rawUrl)
+            const blob = await response.blob()
+            await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
+            notify(t('imageCopied'))
+          } catch { notify(t('actionFailed'), 'error') }
+        }
+        const download = () => {
+          const link = document.createElement('a')
+          link.href = `${rawUrl}&download=1`
+          link.download = entry.name
+          document.body.appendChild(link)
+          link.click()
+          link.remove()
+        }
+        const saveAs = async () => {
+          try {
+            const response = await fetch(rawUrl)
+            const blob = await response.blob()
+            if (window.showSaveFilePicker) {
+              const handle = await window.showSaveFilePicker({ suggestedName: entry.name })
+              const writable = await handle.createWritable()
+              await writable.write(blob)
+              await writable.close()
+            } else download()
+          } catch (error) { if (error?.name !== 'AbortError') notify(t('actionFailed'), 'error') }
+        }
+        const call = endpoint => apiPost(endpoint, { path: item.path, file: entry.path }).catch(() => notify(t('actionFailed'), 'error'))
+        if (isDir) {
+          return [
+            { label: t('copyFolderPath'), onClick: () => copy(absolute, t('copiedPath')) },
+            { separator: true },
+            { label: t('revealInFinder'), onClick: () => call('/reveal') },
+          ]
+        }
+        const items = [{ label: t('copyPath'), onClick: () => copy(absolute, t('copiedPath')) }]
+        if (isImagePath(entry.path)) items.push({ label: t('copyImage'), onClick: copyImage })
+        items.push(
+          { label: t('downloadFile'), onClick: download },
+          { label: t('saveAs'), onClick: saveAs },
+          { separator: true },
+          { label: t('revealInFinder'), onClick: () => call('/reveal') },
+          { label: t('openDefaultApp'), onClick: () => call('/open') },
+        )
+        return items
+      }
       return h(CardBoundary, null,
         h('div', {
-          style: { margin: '6px 8px', borderRadius: T.rMd, border: `0.5px solid ${T.border}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 34%, transparent)', overflow: 'hidden' },
+          style: { margin: '6px 8px', flex: open ? '1 0 auto' : '0 0 auto', minHeight: open ? 0 : undefined, display: 'flex', flexDirection: 'column', borderRadius: T.rMd, border: `0.5px solid ${T.border}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 34%, transparent)', overflow: 'hidden' },
         },
           h('div', {
             onClick: () => { setOpen(value => !value); onSelect?.(item.path) },
@@ -1154,18 +1698,44 @@ window.__ModuleLoader__.load({
             h('span', { style: { fontSize: 11, color: T.ink2, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 170 } }, item.branch ?? t('detached')),
             h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
             h('span', { style: { flex: 1 } }),
-            h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(entries.length)),
+            h('span', { style: { fontSize: 10.5, color: T.subtle } }, dirs['']?.phase === 'ready' ? String(rootEntries.length) : ''),
             h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshFiles() } }, h(RefreshIcon, {}))),
-          open ? (files.phase === 'loading' && entries.length === 0
-            ? h('div', { style: { fontSize: 10.5, color: T.muted, padding: '4px 22px 6px' } }, t('filesLoading'))
-            : h('div', { style: { padding: '4px 6px 6px' } },
-                h(TreeRows, {
-                  node: tree, depth: 0, expandedDirs, onToggleDir: toggleDir,
-                  onOpen: file => onOpen(file, item.path),
-                  selectedKey: selectedPath ? `f:${selectedPath}` : undefined,
-                  actionsFor: null, statusByPath, showStatus: true, dirStatusByPath,
-                  hoveredKey, onHoverKey: setHoveredKey,
-                }))) : null))
+          open ? h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 6px' } }, rows) : null))
+    }
+
+    /** Unpushed commits for the current worktree (local commits not reachable from any remote). */
+    function useLocalCommits(repository, enabled) {
+      const [state, setState] = useState({ phase: 'idle', commits: [], error: null })
+      const [version, setVersion] = useState(0)
+      const path = repository?.path
+      useEffect(() => {
+        if (!path || !enabled) { setState({ phase: 'idle', commits: [], error: null }); return undefined }
+        let live = true
+        setState(previous => ({ ...previous, phase: 'loading' }))
+        api('/local-commits', { path, limit: 80 })
+          .then(data => { if (live) setState({ phase: 'ready', commits: Array.isArray(data?.commits) ? data.commits : [], error: null }) })
+          .catch(error => { if (live) setState({ phase: 'error', commits: [], error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [path, enabled, version])
+      return [state, () => setVersion(value => value + 1)]
+    }
+
+    /** Full parsed patch of one commit, for the multi-file commit view. */
+    function useCommitPatch(repository, selection) {
+      const [state, setState] = useState({ phase: 'idle', data: null, error: null })
+      const [version, setVersion] = useState(0)
+      const active = selection?.kind === 'commit-files'
+      const path = selection?.repoPath ?? repository?.path
+      useEffect(() => {
+        if (!path || !active) { setState({ phase: 'idle', data: null, error: null }); return undefined }
+        let live = true
+        setState({ phase: 'loading', data: null, error: null })
+        api('/commit-patch', { path, hash: selection.hash })
+          .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
+          .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [path, active, selection?.hash, version])
+      return [state, () => setVersion(value => value + 1)]
     }
 
     /* ── primitives ─────────────────────────────────────────────────── */
@@ -1206,9 +1776,46 @@ window.__ModuleLoader__.load({
           justifyContent: 'center', width: 30, height: 30, borderRadius: T.rMd, opacity: disabled ? 0.3 : 1, padding: 0,
           transition: `background .15s ${T.ease}, color .15s ${T.ease}`,
         },
-        onMouseEnter: event => { if (!disabled) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = T.text } },
-        onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = T.ink2 },
+        onMouseEnter: event => { if (!disabled) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = T.text; showTooltip(label, event.currentTarget) } },
+        onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = T.ink2; hideTooltip() },
       }, children)
+    }
+
+    let tooltipElement = null
+    function hideTooltip() {
+      if (tooltipElement) { tooltipElement.remove(); tooltipElement = null }
+    }
+    function showTooltip(text, target) {
+      hideTooltip()
+      if (!text || typeof document === 'undefined' || !target) return
+      const element = document.createElement('div')
+      element.textContent = text
+      element.setAttribute('role', 'tooltip')
+      element.style.cssText = [
+        'position:fixed', 'z-index:10000', 'pointer-events:none', 'padding:4px 8px', 'border-radius:6px',
+        'font-size:11px', 'line-height:1.4', 'max-width:280px', 'white-space:nowrap',
+        'background:var(--dsw-alias-bg-layer-2, #1b1b20)', 'color:var(--dsw-alias-label-primary, #e6e6ea)',
+        'border:0.5px solid var(--dsw-alias-border-l2, rgba(255,255,255,.14))',
+        'box-shadow:0 6px 24px rgba(0,0,0,.3)',
+        'font-family:var(--dsw-font-family, -apple-system, sans-serif)',
+      ].join(';')
+      document.body.appendChild(element)
+      const rect = target.getBoundingClientRect()
+      const width = element.offsetWidth || 0
+      const height = element.offsetHeight || 0
+      const left = Math.max(4, Math.min(rect.left + rect.width / 2 - width / 2, (window.innerWidth || 1200) - width - 4))
+      let top = rect.bottom + 6
+      if (top + height > (window.innerHeight || 800) - 4) top = rect.top - height - 6
+      element.style.left = `${left}px`
+      element.style.top = `${Math.max(4, top)}px`
+      tooltipElement = element
+    }
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('pointerdown', () => hideTooltip(), true)
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('scroll', () => hideTooltip(), true)
+      window.addEventListener('blur', () => hideTooltip())
     }
 
     function IconAction({ label, onClick, disabled, danger, children }) {
@@ -1220,8 +1827,8 @@ window.__ModuleLoader__.load({
           justifyContent: 'center', width: 22, height: 22, borderRadius: T.rSm, padding: 0,
           opacity: disabled ? 0.3 : 1, transition: `background .15s ${T.ease}, color .15s ${T.ease}`,
         },
-        onMouseEnter: event => { if (!disabled) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = danger ? T.error : T.text } },
-        onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = danger ? T.error : T.muted },
+        onMouseEnter: event => { if (!disabled) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = danger ? T.error : T.text; showTooltip(label, event.currentTarget) } },
+        onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = danger ? T.error : T.muted; hideTooltip() },
       }, children)
     }
 
@@ -1326,6 +1933,7 @@ window.__ModuleLoader__.load({
           onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
         },
           h(Chevron, { open: expanded, size: 9 }),
+          h(FileGlyph, { name: directory.name, kind: 'dir', expanded }),
           h('span', { style: { fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: dirStatus ? (STATUS_COLOR[dirStatus] ?? T.ink2) : T.ink2 } }, directory.name),
           h('span', { style: { flex: 1 } }),
           h('span', { style: { fontSize: 10, fontWeight: 700, color: dirStatus ? (STATUS_COLOR[dirStatus] ?? T.subtle) : 'transparent', opacity: 0.85 } }, dirStatus ?? '')))
@@ -1350,13 +1958,14 @@ window.__ModuleLoader__.load({
           onClick: event => onOpen(file, event),
           style: {
             display: 'flex', alignItems: 'center', gap: 5, minHeight: 22, margin: '0 6px',
-            padding: `2px 8px 2px ${8 + depth * 13 + 11}px`,
+            padding: `2px 8px 2px ${8 + depth * 13 + 13}px`,
             cursor: 'pointer', background: active ? T.selected : 'transparent', minWidth: 0,
             borderRadius: T.rSm, transition: `background .12s ${T.ease}`,
           },
           onMouseEnter: event => { if (!active) event.currentTarget.style.background = T.hover; onHoverKey?.(key) },
           onMouseLeave: event => { if (!active) event.currentTarget.style.background = 'transparent'; if (hoveredKey === key) onHoverKey?.(undefined) },
         },
+          h(FileGlyph, { name: file.name, kind: 'file' }),
           h('span', {
             style: {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, fontSize: 12.5,
@@ -1379,58 +1988,100 @@ window.__ModuleLoader__.load({
 
     /* ── diff / preview components ──────────────────────────────────── */
 
-    function DiffLines({ file, view, t }) {
+    const DIFF_RENDER_STEP = 600
+
+    function DiffLines({ file, view, t, wrap = false, embedded = false }) {
       const files = Array.isArray(file) ? file : [file]
       const entry = files[0]
+      const [visibleCount, setVisibleCount] = useState(DIFF_RENDER_STEP)
+      const [expandedHunks, setExpandedHunks] = useState(() => new Set())
+      const scrollRef = useRef(null)
+      const resetKey = `${entry?.path ?? ''}|${entry?.additions ?? 0}|${entry?.deletions ?? 0}|${entry?.hunks?.length ?? 0}|${view}`
+      useEffect(() => {
+        setVisibleCount(DIFF_RENDER_STEP)
+        setExpandedHunks(new Set())
+        if (scrollRef.current) scrollRef.current.scrollTop = 0
+      }, [resetKey])
       if (!entry) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('noDiff'))
       if (entry.binary) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('binary'))
       if (entry.hunks.length === 0) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('noDiff'))
       const language = languageOf(entry.path ?? '')
       const highlight = entry.hunks.reduce((total, hunk) => total + hunk.lines.length, 0) <= 1500
       const rows = view === 'split' ? splitRows(entry.hunks, language, highlight) : unifiedRows(entry.hunks, language, highlight)
-
-      if (view === 'split') {
-        return h('div', { style: { overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: 24 } },
-          rows.map(row => {
-            if (row.kind === 'hunk') return h('div', { key: row.key, style: hunkHeaderStyle }, row.label)
-            if (row.kind === 'notice') return h('div', { key: row.key, style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice'))
-            return h('div', {
-              key: row.key,
-              style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', minHeight: 20, borderBottom: `0.5px solid ${T.borderSoft}` },
-            },
-              h(DiffHalf, { line: row.left, side: 'left', language, highlight }),
-              h(DiffHalf, { line: row.right, side: 'right', language, highlight }))
-          }))
+      const bigHunks = new Set()
+      entry.hunks.forEach((hunk, index) => { if ((hunk.lines?.length ?? 0) > 1000) bigHunks.add(index) })
+      const displayRows = []
+      for (const row of rows) {
+        if (row.hunkIndex !== undefined && bigHunks.has(row.hunkIndex) && !expandedHunks.has(row.hunkIndex)) {
+          if (row.kind === 'hunk') {
+            displayRows.push(row)
+            displayRows.push({ kind: 'collapsed-hunk', key: `c:${row.hunkIndex}`, hunkIndex: row.hunkIndex, count: entry.hunks[row.hunkIndex].lines.length })
+          }
+          continue
+        }
+        displayRows.push(row)
       }
-
-      return h('div', { style: { overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: 24 } },
-        rows.map(row => {
-          if (row.kind === 'hunk') return h('div', { key: row.key, style: hunkHeaderStyle }, row.label)
-          if (row.kind === 'notice') return h('div', { key: row.key, style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice'))
-          const isAdd = row.kindOfLine === 'add'
-          const isDel = row.kindOfLine === 'del'
+      const visibleRows = embedded || visibleCount >= displayRows.length ? displayRows : displayRows.slice(0, visibleCount)
+      const renderRow = row => {
+        if (row.kind === 'hunk') return h('div', { key: row.key, style: hunkHeaderStyle }, row.label)
+        if (row.kind === 'notice') return h('div', { key: row.key, style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice'))
+        if (row.kind === 'collapsed-hunk') {
+          return h('button', {
+            key: row.key, type: 'button',
+            onClick: () => setExpandedHunks(previous => { const next = new Set(previous); next.add(row.hunkIndex); return next }),
+            style: {
+              display: 'block', width: '100%', textAlign: 'left', appearance: 'none', border: 'none', cursor: 'pointer',
+              background: T.hover, color: T.muted, padding: '8px 16px', fontSize: 11.5, font: 'inherit',
+            },
+          }, t('diffHunkCollapsed', { count: row.count }))
+        }
+        if (view === 'split') {
           return h('div', {
             key: row.key,
-            style: {
-              display: 'grid', gridTemplateColumns: '46px 46px 16px minmax(max-content, 1fr)',
-              background: isAdd ? ADD_BG : isDel ? DEL_BG : 'transparent', minHeight: 19, alignItems: 'start',
-            },
+            style: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', minHeight: 20, borderBottom: `0.5px solid ${T.borderSoft}` },
           },
-            h('span', { style: numberStyle }, row.oldNumber),
-            h('span', { style: numberStyle }, row.newNumber),
-            h('span', {
-              style: { ...numberStyle, textAlign: 'center', opacity: 1, color: isAdd ? T.success : isDel ? T.error : T.muted },
-            }, row.sign),
-            h('span', {
-              style: {
-                fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: 'pre', paddingRight: 18,
-                color: isAdd ? T.success : isDel ? T.error : 'inherit', opacity: isDel ? 0.9 : 1,
-              },
-            }, h(CodeText, { text: row.text, language, highlight, baseColor: isAdd ? T.success : isDel ? T.error : 'inherit' })))
-        }))
+            h(DiffHalf, { line: row.left, side: 'left', language, highlight, wrap }),
+            h(DiffHalf, { line: row.right, side: 'right', language, highlight, wrap }))
+        }
+        const isAdd = row.kindOfLine === 'add'
+        const isDel = row.kindOfLine === 'del'
+        return h('div', {
+          key: row.key,
+          style: {
+            display: 'grid', gridTemplateColumns: '46px 46px 16px minmax(max-content, 1fr)',
+            background: isAdd ? ADD_BG : isDel ? DEL_BG : 'transparent', minHeight: 19, alignItems: 'start',
+          },
+        },
+          h('span', { style: numberStyle }, row.oldNumber),
+          h('span', { style: numberStyle }, row.newNumber),
+          h('span', {
+            style: { ...numberStyle, textAlign: 'center', opacity: 1, color: isAdd ? T.success : isDel ? T.error : T.muted },
+          }, row.sign),
+          h('span', {
+            style: {
+              fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: wrap ? 'pre-wrap' : 'pre',
+              overflowWrap: wrap ? 'anywhere' : undefined, paddingRight: 18,
+              color: isAdd ? T.success : isDel ? T.error : 'inherit', opacity: isDel ? 0.9 : 1,
+            },
+          }, h(CodeText, { text: row.text, language, highlight, baseColor: isAdd ? T.success : isDel ? T.error : 'inherit' })))
+      }
+      return h('div', {
+        ref: scrollRef,
+        onScroll: embedded ? undefined : event => {
+          const element = event.currentTarget
+          if (visibleCount < displayRows.length && element.scrollHeight - element.scrollTop - element.clientHeight < 800) {
+            setVisibleCount(count => Math.min(displayRows.length, count + DIFF_RENDER_STEP))
+          }
+        },
+        style: embedded ? { paddingBottom: 8 } : { overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: 24 },
+      },
+        visibleRows.map(renderRow),
+        !embedded && visibleCount < displayRows.length
+          ? h('div', { style: { padding: '8px 16px', fontSize: 11.5, color: T.muted } }, t('moreLines', { shown: visibleCount, total: displayRows.length }))
+          : null)
     }
 
-    function DiffHalf({ line, side, language, highlight }) {
+    function DiffHalf({ line, side, language, highlight, wrap = false }) {
       const isAdd = line?.kind === 'add'
       const isDel = line?.kind === 'del'
       return h('div', {
@@ -1446,8 +2097,8 @@ window.__ModuleLoader__.load({
         }, line ? (isAdd ? '+' : isDel ? '−' : ' ') : ''),
         h('span', {
           style: {
-            fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere', paddingRight: 14,
+            fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: wrap ? 'pre-wrap' : 'pre',
+            overflowWrap: wrap ? 'anywhere' : undefined, paddingRight: 14,
             color: isAdd ? T.success : isDel ? T.error : 'inherit', opacity: isDel ? 0.9 : 1, minWidth: 0,
             display: 'block',
           },
@@ -1470,14 +2121,31 @@ window.__ModuleLoader__.load({
       const data = state.data
       if (!data) return null
       const extension = selection.path.slice(selection.path.lastIndexOf('.') + 1).toLowerCase()
-      const image = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(extension)
-      if (extension === 'pdf') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('binary'))
+      const rawUrl = `/git-assistant/api/raw?path=${encodeURIComponent(data.repoPath ?? '')}&file=${encodeURIComponent(selection.path)}`
+      const image = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(extension)
+      const audio = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'].includes(extension)
+      const video = ['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(extension)
       if (image) {
-        const src = `/git-assistant/api/raw?path=${encodeURIComponent(state.data.repoPath ?? '')}&file=${encodeURIComponent(selection.path)}`
         return h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, overflow: 'auto' } },
-          h('img', { src, alt: selection.path, style: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' } }))
+          h('img', { src: rawUrl, alt: selection.path, style: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' } }))
       }
-      if (data.binary) return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('binary'))
+      if (audio) {
+        return h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 } },
+          h('audio', { controls: true, src: rawUrl, style: { width: '80%' } }))
+      }
+      if (video) {
+        return h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, overflow: 'auto' } },
+          h('video', { controls: true, src: rawUrl, style: { maxWidth: '100%', maxHeight: '100%' } }))
+      }
+      if (extension === 'pdf') {
+        return h('div', { style: { flex: 1, minHeight: 0, display: 'flex' } },
+          h('iframe', { src: rawUrl, title: selection.path, style: { flex: 1, width: '100%', height: '100%', border: 'none', background: '#fff' } }))
+      }
+      if (data.binary) {
+        return h('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 6, color: T.muted, fontSize: 12.5, padding: 18 } },
+          h('div', null, t('binary')),
+          h('div', { style: { fontFamily: MONO, fontSize: 11, color: T.subtle } }, `${selection.path} · ${typeof data.size === 'number' ? `${(data.size / 1024).toFixed(1)} KB` : ''}`))
+      }
       const language = languageOf(selection.path)
       const lines = (data.content ?? '').split('\n').slice(0, MAX_PREVIEW_LINES)
       const highlight = lines.length <= 3000
@@ -1577,6 +2245,7 @@ window.__ModuleLoader__.load({
     /* ── main panel ─────────────────────────────────────────────────── */
 
     function Panel({ t, ctx, sessionId, renderFactorySlot, inputActions }) {
+      useCodePalette()
       const [repositories, refreshRepositories] = useRepositories()
       const [storedId, setStoredId] = useState(readStoredRepository)
       const [dataVersion, setDataVersion] = useState(0)
@@ -1598,6 +2267,10 @@ window.__ModuleLoader__.load({
       const [hoveredKey, setHoveredKey] = useState(undefined)
       const [picked, setPicked] = useState(() => new Set())
       const [graphPath, setGraphPath] = useState(undefined)
+      const [wrap, setWrap] = useState(false)
+      const [commitPickerOpen, setCommitPickerOpen] = useState(false)
+      const commitPickerRef = useRef(null)
+      const [collapseAllSignal, setCollapseAllSignal] = useState(0)
       const [quoteText, setQuoteText] = useState(undefined)
       const [quoteAnchor, setQuoteAnchor] = useState(undefined)
       const rightCardRef = useRef(null)
@@ -1645,7 +2318,19 @@ window.__ModuleLoader__.load({
       const preview = useFilePreview(selection?.repoPath ? { path: selection.repoPath } : active, selection)
       const [allDiff, refreshAllDiff] = useAllDiffs(active, selection, status.data, dataVersion)
       const [worktrees, refreshWorktrees] = useWorktrees(active, dataVersion)
+      const [localCommits, refreshLocalCommits] = useLocalCommits(active, commitPickerOpen)
+      const [commitPatch, refreshCommitPatch] = useCommitPatch(active, selection)
 
+      useEffect(() => {
+        if (!commitPickerOpen) return undefined
+        const close = event => { if (commitPickerRef.current && !commitPickerRef.current.contains(event.target)) setCommitPickerOpen(false) }
+        document.addEventListener('pointerdown', close)
+        return () => document.removeEventListener('pointerdown', close)
+      }, [commitPickerOpen])
+      useEffect(() => {
+        if (!selection || selection.kind !== 'commit-files') return
+        setWrap(false)
+      }, [selection?.hash])
       useEffect(() => {
         if (!commitMenu) return undefined
         const close = event => { if (commitMenuRef.current && !commitMenuRef.current.contains(event.target)) setCommitMenu(false) }
@@ -1743,19 +2428,21 @@ window.__ModuleLoader__.load({
             },
           })
         : null
-      const worktreeFilesCards = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 44px' } },
+      const worktreeFilesCards = h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '4px 0 6px' } },
         worktrees.items.map(item => h(WorktreeFilesCard, {
-          key: item.path, t, item, defaultOpen: item.path === active?.path || Boolean(item.isMain),
+          key: item.path, t, item, defaultOpen: item.path === active?.path || Boolean(item.isMain), visible: mode === 'files',
           selectedPath: selection?.kind === 'file' ? selection.path : undefined,
           onSelect: path => setGraphPath(path),
+          onNotify: notify,
           onOpen: (file, repoPath) => { setGraphPath(repoPath); setSelection({ kind: 'file', path: file.path, repoPath }) },
         })))
       const worktreeCards = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 44px' } },
         worktrees.items.map(item => h(WorktreeCard, {
-          key: item.path, t, item, defaultOpen: item.path === active?.path || Boolean(item.isMain),
+          key: item.path, t, item, defaultOpen: item.path === active?.path || Boolean(item.isMain), visible: mode === 'changes',
           selectedPath: selection?.kind === 'diff' ? selection.path : undefined,
           onNotify: notify,
           onChanged: () => { refreshWorktrees(); bump() },
+          onDiscardAll: paths => discardPaths(paths),
           onSelect: path => setGraphPath(path),
           onOpen: (file, repoPath) => { setGraphPath(repoPath); setSelection({ kind: 'diff', path: file.path, staged: Boolean(file.__staged), repoPath }) },
         })))
@@ -2159,154 +2846,9 @@ window.__ModuleLoader__.load({
                   },
                 }, value === 'changes' ? t('changesTab') : t('filesTab'))))),
 
-            mode === 'changes' ? worktreeCards
-              : mode === 'changes' ? h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', paddingBottom: 12 } },
-              active ? h('div', {
-                style: { padding: '12px 14px 10px', display: 'flex', flexDirection: 'column', gap: 8, borderBottom: `0.5px solid ${T.borderSoft}` },
-              },
-                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0 } },
-                  h('span', { style: { fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' } }, active.repoName),
-                  h('span', { style: { fontSize: 10.5, fontFamily: MONO, opacity: 0.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-                    active.path),
-                  h('span', { style: { fontSize: 10.5, fontFamily: MONO, opacity: 0.5 } }, active.branch ?? t('noBranch'))),
-                h('textarea', {
-                  defaultValue: commitMessage, placeholder: t('commitPlaceholder'), rows: 2, ref: commitRef,
-                  onChange: event => setCommitMessage(event.target.value),
-                  onKeyDown: event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); commit('commit') } },
-                  style: {
-                    resize: 'vertical', minHeight: 42, maxHeight: 140,
-                    background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 46%, transparent)',
-                    color: 'inherit', border: `0.5px solid ${T.border}`, borderRadius: T.rMd,
-                    padding: '8px 10px', fontSize: 12.5, fontFamily: 'inherit', outline: 'none',
-                    lineHeight: '18px', transition: `border-color .18s ${T.ease}, background .18s ${T.ease}`,
-                  },
-                }),
-                h('div', { style: { display: 'flex', alignItems: 'stretch', gap: 0, width: '100%' } },
-                  h('div', {
-                    ref: commitMenuRef,
-                    style: {
-                      position: 'relative', display: 'flex', alignItems: 'stretch', width: '100%',
-                      height: 32, borderRadius: T.rMd,
-                      border: `0.5px solid ${T.border}`,
-                      background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 52%, transparent)',
-                    },
-                  },
-                    h('button', {
-                      type: 'button', onClick: () => commit('commit'), disabled: busy || !commitMessage.trim(),
-                      style: {
-                        appearance: 'none', border: 'none', flex: 1, cursor: busy ? 'default' : 'pointer',
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                        background: 'transparent', color: T.ink2, font: 'inherit', fontSize: 12,
-                        opacity: busy || !commitMessage.trim() ? 0.45 : 1,
-                        transition: `background .15s ${T.ease}, color .15s ${T.ease}`,
-                      },
-                      onMouseEnter: event => { if (!busy && commitMessage.trim()) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = T.text } },
-                      onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = T.ink2 },
-                    },
-                      busy ? t('committing') : t('commit'),
-                      h('span', { style: { fontFamily: MONO, fontSize: 10, opacity: 0.45 } }, '⌘↩')),
-                    h('button', {
-                      type: 'button', onClick: () => setCommitMenu(open => !open), disabled: busy, title: '更多提交方式',
-                      style: {
-                        appearance: 'none', border: 'none', cursor: busy ? 'default' : 'pointer', width: 34,
-                        background: 'transparent', color: T.muted, fontSize: 12,
-                        borderLeft: `0.5px solid ${T.border}`, opacity: busy ? 0.4 : 1,
-                        transition: `background .15s ${T.ease}`,
-                      },
-                      onMouseEnter: event => { event.currentTarget.style.background = T.hover },
-                      onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
-                    }, '▾'),
-                    commitMenu ? h('div', {
-                      style: {
-                        position: 'absolute', bottom: '100%', right: 0, marginBottom: 6, zIndex: 70, width: 170,
-                        background: T.menu, border: `0.5px solid ${T.border}`, borderRadius: T.rMd, padding: 4,
-                        boxShadow: T.shadowProminent, backdropFilter: 'blur(28px) saturate(170%)',
-                      },
-                    },
-                      ...[['commit', t('commit')], ['amend', t('commitAmend')], ['push', t('commitPush')], ['sync', t('commitSync')]]
-                        .map(([key, label]) => h('button', {
-                          key, type: 'button', onClick: () => commit(key),
-                          style: {
-                            appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
-                            background: 'transparent', color: 'inherit', padding: '6px 10px', borderRadius: T.rSm,
-                            fontSize: 12,
-                          },
-                          onMouseEnter: event => { event.currentTarget.style.background = T.hover },
-                          onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
-                        }, label))) : null)),
-                dirty ? h('div', { style: { fontSize: 10.5, opacity: 0.4 } }, t('dirtyCount', { count: dirty })) : null)
-              : null,
-              status.phase === 'loading' && !status.data
-                ? h('div', { style: { padding: '14px 13px', fontSize: 12, opacity: 0.5 } }, t('loading'))
-                : status.phase === 'error'
-                  ? h('div', { style: { padding: '14px 13px', fontSize: 12, color: T.error, opacity: 0.85 } }, `${t('loadError')}: ${status.error}`)
-                  : h('div', {},
-                      h(Section, {
-                        title: t('staged'), count: stagedFiles.length,
-                        collapsed: collapsedSections.has('staged'), onToggle: () => toggleSection('staged'),
-                        actions: h('span', { style: { display: 'inline-flex', gap: 1, alignItems: 'center' } },
-                          h(IconAction, { label: t('viewAll'), onClick: () => openAll(true) }, h(IconDiff)),
-                          stagedFiles.length > 0
-                            ? h(IconAction, { label: t('unstageAll'), onClick: () => unstagePaths(picked.size > 0 ? scopedPaths(stagedFiles.map(file => file.path)) : stagedFiles.map(file => file.path)), disabled: busy }, h(IconMinus))
-                            : null),
-                      }, stagedFiles.length === 0
-                        ? h('div', { style: { padding: '0 12px 4px 30px', fontSize: 11.5, opacity: 0.34 } }, '—')
-                        : h(TreeRows, {
-                            node: changeTree, depth: 0, expandedDirs, onToggleDir: toggleDir, pickedKeys: picked, onDragStartRow: startDrag,
-                            onOpen: openDiff, selectedKey, statusByPath, showStatus: false,
-                            hoveredKey, onHoverKey: setHoveredKey,
-                            actionsFor: file => h(IconAction, { label: t('unstage'), onClick: event => { event.stopPropagation(); unstagePaths(pickedPathsFor(file)) }, disabled: busy }, h(IconMinus)),
-                          })),
-                      h(Section, {
-                        title: t('changes'), count: changeFiles.length,
-                        collapsed: collapsedSections.has('changes'), onToggle: () => toggleSection('changes'),
-                        actions: h('span', { style: { display: 'inline-flex', gap: 1, alignItems: 'center' } },
-                          h(IconAction, { label: t('viewAll'), onClick: () => openAll(false) }, h(IconDiff)),
-                          changeFiles.length > 0
-                            ? h(IconAction, { label: t('discardAll'), danger: true, onClick: () => discardPaths(picked.size > 0 ? scopedPaths(changeFiles.map(file => file.path)) : changeFiles.map(file => file.path)), disabled: busy }, h(IconUndo))
-                            : null,
-                          changeFiles.length > 0
-                            ? h(IconAction, { label: t('stageAll'), onClick: () => stagePaths(picked.size > 0 ? scopedPaths(changeFiles.map(file => file.path)) : changeFiles.map(file => file.path)), disabled: busy }, h(IconPlus))
-                            : null),
-                      }, changeFiles.length === 0
-                        ? h('div', { style: { padding: '0 12px 4px 30px', fontSize: 11.5, opacity: 0.34 } }, '—')
-                        : h(TreeRows, {
-                            node: workingTree, depth: 0, expandedDirs, onToggleDir: toggleDir, pickedKeys: picked, onDragStartRow: startDrag,
-                            onOpen: openDiff, selectedKey, statusByPath, showStatus: false,
-                            hoveredKey, onHoverKey: setHoveredKey,
-                            actionsFor: file => h('span', { style: { display: 'inline-flex', gap: 1 } },
-                              h(IconAction, { label: t('discard'), danger: true, onClick: event => { event.stopPropagation(); discardPaths(pickedPathsFor(file)) }, disabled: busy }, h(IconUndo)),
-                              h(IconAction, { label: t('stage'), onClick: event => { event.stopPropagation(); stagePaths(pickedPathsFor(file)) }, disabled: busy }, h(IconPlus))),
-                          })),
-                      status.data?.untrackedOmitted
-                        ? h('div', { style: { padding: '4px 12px', fontSize: 10.5, opacity: 0.4 } }, t('omitted', { count: status.data.untrackedOmitted }))
-                        : null))
-              : mode === 'files' ? worktreeFilesCards
-              : h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
-                  h('div', { style: { padding: '8px 10px' } },
-                    h('input', {
-                      value: filesFilter, placeholder: t('filterPlaceholder'),
-                      onChange: event => setFilesFilter(event.target.value),
-                      style: {
-                        width: '100%', boxSizing: 'border-box',
-                        background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 46%, transparent)',
-                        color: 'inherit', border: `0.5px solid ${T.border}`, borderRadius: T.rMd,
-                        padding: '6px 11px', fontSize: 12, outline: 'none',
-                      },
-                    })),
-                  h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', paddingBottom: 12 } },
-                    files.phase === 'loading'
-                      ? h('div', { style: { padding: '10px 12px', fontSize: 12, opacity: 0.5 } }, t('filesLoading'))
-                      : files.phase === 'error'
-                        ? h('div', { style: { padding: '10px 12px', fontSize: 12, color: T.error } }, t('loadError'))
-                        : filteredFiles.length === 0
-                          ? h('div', { style: { padding: '10px 12px', fontSize: 12, opacity: 0.4 } }, t('noFiles'))
-                          : h(TreeRows, {
-                              node: repositoryFilesTree, depth: 0, expandedDirs, onToggleDir: toggleDir, pickedKeys: picked, onDragStartRow: startDrag,
-                              onOpen: openFile, selectedKey, statusByPath, showStatus: true, actionsFor: null,
-                              hoveredKey, onHoverKey: setHoveredKey,
-                            }),
-                    files.truncated ? h('div', { style: { padding: '6px 12px', fontSize: 10.5, opacity: 0.4 } }, t('filesTruncated', { count: files.total })) : null))),
+            h('div', { style: { display: mode === 'changes' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 } }, worktreeCards),
+            h('div', { style: { display: mode === 'files' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 } }, worktreeFilesCards),
+          ),
 
           // commit graph drawer docked over the workbench column
           graphDrawer,
@@ -2340,6 +2882,99 @@ window.__ModuleLoader__.load({
                 backdropFilter: 'blur(16px)',
               },
             }, t('quoteAction')) : null,
+            h('div', {
+              style: {
+                display: 'flex', alignItems: 'center', gap: 6, minHeight: 38, padding: '0 10px',
+                borderBottom: `0.5px solid ${T.borderSoft}`, flex: '0 0 auto', minWidth: 0,
+              },
+            },
+              h('div', { ref: commitPickerRef, style: { position: 'relative', minWidth: 0, flex: '0 1 auto' } },
+                h('button', {
+                  type: 'button', title: t('selectCommit'),
+                  onClick: () => { setCommitPickerOpen(open => !open); if (!commitPickerOpen) refreshLocalCommits() },
+                  style: {
+                    appearance: 'none', border: `0.5px solid ${T.border}`,
+                    background: commitPickerOpen ? T.hover : 'transparent', color: T.ink2, height: 26,
+                    padding: '0 10px', borderRadius: T.pill, fontSize: 11.5, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, maxWidth: 320,
+                  },
+                },
+                  h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                    selection?.kind === 'commit-files'
+                      ? `${selection.hash.slice(0, 7)} ${selection.subject ?? ''}`.trim()
+                      : t('selectCommit')),
+                  h(Chevron, { open: commitPickerOpen, size: 8 })),
+                commitPickerOpen ? h('div', {
+                  style: {
+                    position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 80, width: 380,
+                    maxHeight: 360, overflowY: 'auto', background: T.menu, border: `0.5px solid ${T.border}`,
+                    borderRadius: T.rMd, padding: 4, boxShadow: T.shadowProminent,
+                    backdropFilter: 'blur(24px) saturate(160%)',
+                  },
+                },
+                  h('button', {
+                    type: 'button', onClick: () => { setSelection(null); setCommitPickerOpen(false) },
+                    style: { display: 'flex', alignItems: 'center', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', padding: '5px 8px', borderRadius: T.rSm, fontSize: 11.5, gap: 6 },
+                    onMouseEnter: event => { event.currentTarget.style.background = T.hover },
+                    onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
+                  }, t('workspaceChanges')),
+                  h('div', { style: { padding: '4px 8px 3px', fontSize: 10, color: T.subtle } }, t('unpushedCommits')),
+                  localCommits.phase === 'loading'
+                    ? h('div', { style: { padding: '6px 10px', fontSize: 11, color: T.muted } }, t('loading'))
+                    : localCommits.commits.length === 0
+                      ? h('div', { style: { padding: '6px 10px', fontSize: 11, color: T.muted } }, t('noUnpushedCommits'))
+                      : localCommits.commits.map(commit => h('button', {
+                          key: commit.oid, type: 'button',
+                          onClick: () => {
+                            setSelection({ kind: 'commit-files', repoPath: active?.path, hash: commit.oid, subject: commit.subject })
+                            setCommitPickerOpen(false)
+                          },
+                          style: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', padding: '5px 8px', borderRadius: T.rSm, fontSize: 11.5 },
+                          onMouseEnter: event => { event.currentTarget.style.background = T.hover },
+                          onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
+                        },
+                          h('span', { style: { fontFamily: MONO, fontSize: 10, color: T.subtle } }, commit.oid.slice(0, 7)),
+                          h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, commit.subject || '(no message)'),
+                          h('span', { style: { fontFamily: MONO, fontSize: 10, color: T.subtle } }, new Date(commit.time * 1000).toLocaleDateString()))))
+                : null),
+              h('span', { style: { flex: 1 } }),
+              h('button', {
+                type: 'button', onClick: () => setWrap(value => !value), title: t('wrapLines'),
+                style: {
+                  appearance: 'none', border: `0.5px solid ${T.border}`, cursor: 'pointer', height: 26, padding: '0 10px',
+                  borderRadius: T.pill, fontSize: 11, color: wrap ? T.text : T.muted, background: wrap ? T.hover : 'transparent',
+                },
+              }, t('wrapLines')),
+              h('button', {
+                type: 'button', onClick: () => setCollapseAllSignal(value => value + 1),
+                disabled: selection?.kind !== 'commit-files', title: t('collapseAllFiles'),
+                style: {
+                  appearance: 'none', border: `0.5px solid ${T.border}`, cursor: selection?.kind === 'commit-files' ? 'pointer' : 'default',
+                  height: 26, padding: '0 10px', borderRadius: T.pill, fontSize: 11, color: T.muted, background: 'transparent',
+                  opacity: selection?.kind === 'commit-files' ? 1 : 0.4,
+                },
+              }, t('collapseAllFiles')),
+              h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: T.pill, background: T.hover, border: `0.5px solid ${T.borderSoft}` } },
+                ['unified', 'split'].map(value => h('button', {
+                  key: value, type: 'button', onClick: () => setView(value),
+                  style: {
+                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 10.5,
+                    height: 22, padding: '0 10px', borderRadius: T.pill,
+                    background: view === value ? T.card : 'transparent',
+                    color: view === value ? T.text : T.muted,
+                    boxShadow: view === value ? T.shadowSoft : 'none',
+                    transition: `background .18s ${T.ease}, color .18s ${T.ease}`,
+                  },
+                }, t(value)))),
+              h(IconButton, {
+                label: t('refresh'),
+                onClick: () => {
+                  if (selection?.kind === 'commit-files') refreshCommitPatch()
+                  else if (selection?.kind === 'diff' || selection?.kind === 'commit-diff') refreshDiff()
+                  else if (selection?.kind === 'all') refreshAllDiff()
+                  bump()
+                },
+              }, h(RefreshIcon, {}))),
             selection ? h('div', {
               style: {
                 display: 'flex', alignItems: 'center', gap: 8, minHeight: 46, padding: '0 14px',
@@ -2353,14 +2988,20 @@ window.__ModuleLoader__.load({
                     selection.staged ? t('allStaged') : t('allChanges'),
                     h('span', { style: { marginLeft: 7, fontFamily: MONO, fontSize: 10.5, color: T.muted } }, String(count)))
                 }
+                if (selection.kind === 'commit-files') {
+                  const subject = commitPatch.data?.commit?.subject ?? selection.subject ?? ''
+                  return h('span', { style: { fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }, title: subject },
+                    h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, marginRight: 7 } }, selection.hash.slice(0, 7)),
+                    h('span', { style: { fontWeight: 500 } }, subject))
+                }
                 const parts = splitPath(selection.path)
                 return h('span', { style: { fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }, title: selection.path },
                   h('span', { style: { opacity: 0.45 } }, parts.dir),
                   h('span', { style: { fontWeight: 500 } }, parts.name))
               })(),
               selection.kind !== 'file'
-                ? h('span', { style: { fontSize: 10.5, color: T.muted, border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '1px 8px', whiteSpace: 'nowrap', fontFamily: selection.kind === 'commit-diff' ? MONO : undefined } },
-                    selection.kind === 'commit-diff' ? selection.hash.slice(0, 7) : selection.staged ? t('staged') : t('changes'))
+                ? h('span', { style: { fontSize: 10.5, color: T.muted, border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '1px 8px', whiteSpace: 'nowrap', fontFamily: selection.kind === 'commit-diff' || selection.kind === 'commit-files' ? MONO : undefined } },
+                    selection.kind === 'commit-diff' || selection.kind === 'commit-files' ? selection.hash.slice(0, 7) : selection.staged ? t('staged') : t('changes'))
                 : h('span', { style: { fontSize: 10.5, opacity: 0.5, border: `1px solid ${T.border}`, borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' } },
                     t('readOnly')),
               h('span', { style: { flex: 1 } }),
@@ -2371,25 +3012,15 @@ window.__ModuleLoader__.load({
                         const file = diff.data?.files?.[0]
                         return file ? [h('span', { key: 'a', style: { color: T.success } }, `+${file.additions ?? 0}`), h('span', { key: 'd', style: { color: T.error } }, `−${file.deletions ?? 0}`)] : null
                       }
+                      if (selection.kind === 'commit-files') {
+                        const stats = commitPatch.data?.stats
+                        return [h('span', { key: 'a', style: { color: T.success } }, `+${stats?.additions ?? 0}`), h('span', { key: 'd', style: { color: T.error } }, `−${stats?.deletions ?? 0}`)]
+                      }
                       const totals = allDiff.entries.reduce((sum, item) => ({ add: sum.add + (item.entry?.additions ?? 0), del: sum.del + (item.entry?.deletions ?? 0) }), { add: 0, del: 0 })
                       return [h('span', { key: 'a', style: { color: T.success } }, `+${totals.add}`), h('span', { key: 'd', style: { color: T.error } }, `−${totals.del}`)]
                     })())
                 : null,
-              selection.kind !== 'file'
-                ? h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: T.pill, background: T.hover, border: `0.5px solid ${T.borderSoft}` } },
-                    ['unified', 'split'].map(value => h('button', {
-                      key: value, type: 'button', onClick: () => setView(value),
-                      style: {
-                        appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 10.5,
-                        height: 22, padding: '0 10px', borderRadius: T.pill,
-                        background: view === value ? T.card : 'transparent',
-                        color: view === value ? T.text : T.muted,
-                        boxShadow: view === value ? T.shadowSoft : 'none',
-                        transition: `background .18s ${T.ease}, color .18s ${T.ease}`,
-                      },
-                    }, t(value))))
-                : null,
-              h(IconButton, { label: t('refresh'), onClick: () => { if (selection.kind === 'diff' || selection.kind === 'commit-diff') refreshDiff(); else if (selection.kind === 'all') refreshAllDiff(); bump() } }, h(RefreshIcon, {})))
+              )
               : null,
 
             selection
@@ -2398,10 +3029,12 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
                   : diff.phase === 'error'
                     ? h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, diff.error)
-                    : h(DiffLines, { file: diff.data?.files ?? [], view, t })
+                    : h(DiffLines, { file: diff.data?.files ?? [], view, t, wrap })
                 : selection.kind === 'all'
                   ? h(AllDiff, { state: allDiff, view, t })
-                  : h(FilePreview, { state: { ...preview, data: preview.data ? { ...preview.data, repoPath: active?.path } : null }, selection, t })
+                  : selection.kind === 'commit-files'
+                    ? h(CommitFilesView, { state: commitPatch, view, wrap, t, collapseSignal: collapseAllSignal })
+                  : h(FilePreview, { state: { ...preview, data: preview.data ? { ...preview.data, repoPath: selection.repoPath ?? active?.path } : null }, selection, t })
               : h('div', {
                   style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, textAlign: 'center' },
                 },
