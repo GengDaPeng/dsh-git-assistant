@@ -15,3 +15,4 @@ plugin/dsh-superagent/node_modules/
 
 # Binary design references kept local
 research/assets/
+research/build-probe/logs/
