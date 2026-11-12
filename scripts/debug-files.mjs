@@ -4,7 +4,7 @@ const require = createRequire(import.meta.url)
 const React = require('react')
 const { createRoot } = require('react-dom/client')
 
-const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://127.0.0.1:62528' })
+const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://127.0.0.1:62528', pretendToBeVisual: true })
 globalThis.window = dom.window
 Object.defineProperty(globalThis, 'document', { value: dom.window.document, configurable: true })
 Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true })
@@ -15,7 +15,7 @@ const repos = [
   { id: '/repo', path: '/repo', name: 'repo', repoName: 'repo', branch: 'main', isMain: true },
   { id: '/repo-wt', path: '/repo-wt', name: 'wt', repoName: 'repo', branch: 'feat/x', isMain: false },
 ]
-const status = { branch: 'main', ahead: 0, behind: 2, staged: [], unstaged: [{ path: 'a.ts', status: 'M' }, { path: 'src/b.ts', status: 'M' }], untracked: [], detached: false }
+const status = { branch: 'main', ahead: 0, behind: 2, staged: [{ path: 'staged.ts', status: 'M' }], unstaged: [{ path: 'a.ts', status: 'M' }, { path: 'src/b.ts', status: 'M' }], untracked: [], detached: false }
 const worktrees = { worktrees: [
   { path: '/repo', branch: 'main', ahead: 0, behind: 0, changes: 1, isMain: true },
   { path: '/repo-wt', branch: 'feat/x', ahead: 2, behind: 3, changes: 0, isMain: false },
@@ -27,9 +27,17 @@ globalThis.fetch = async url => {
   const payload = href.includes('/repositories') ? { repositories: repos, workspaces: [{ id: 'ws', name: 'ws', path: '/repo' }] }
     : href.includes('/worktrees') ? worktrees
     : href.includes('/status') ? status
-    : href.includes('/files') ? { files: ['a.ts', 'src/b.ts'], total: 2, truncated: false }
+    : href.includes('/fs/list') ? (new dom.window.URL(href).searchParams.get('dir') === 'src'
+        ? { entries: [{ name: 'b.ts', path: 'src/b.ts', kind: 'file' }], truncated: false }
+        : { entries: [{ name: 'src', path: 'src', kind: 'dir' }, { name: 'a.ts', path: 'a.ts', kind: 'file' }, { name: 'icon.svg', path: 'icon.svg', kind: 'file' }], truncated: false })
+    : href.includes('/files') ? { files: ['a.ts', 'src/b.ts', 'images/logo.png', 'icon.svg'], total: 4, truncated: false }
     : href.includes('/file') ? { path: 'a.ts', content: 'hello', size: 5, binary: false }
     : href.includes('/branches') ? { local: [], remote: [], detached: false }
+    : href.includes('/local-commits') ? { commits: [{ oid: 'abc1234def', author: 'A', time: 1700000000, subject: 'test commit' }] }
+    : href.includes('/commit-patch') ? { commit: { hash: 'abc1234def', subject: 'test commit' }, stats: { files: 2, additions: 3, deletions: 1 }, files: [
+        { path: 'a.ts', status: 'M', additions: 2, deletions: 1, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'added line', oldNumber: 1, newNumber: 1 }] }] },
+        { path: 'src/b.ts', status: 'M', additions: 1, deletions: 0, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'another line', oldNumber: 1, newNumber: 1 }] }] },
+      ] }
     : href.includes('/commit-diff') ? { file: 'a.ts', hash: 'abc1234def', files: [{ path: 'a.ts', binary: false, newFile: false, deletedFile: false, additions: 1, deletions: 0, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'added line', oldNumber: 1, newNumber: 1 }] }] }] }
     : href.includes('/commit') ? { commit: { hash: 'abc1234def', author: 'A', email: 'a@x', time: 1700000000, subject: 'merge commit', body: 'detail body' }, files: [{ path: 'a.ts', status: 'M', additions: 3, deletions: 1 }], stats: { files: 1, additions: 3, deletions: 1 } }
     : href.includes('/graph') ? { commits: [
@@ -46,6 +54,13 @@ dom.window.__ModuleLoader__ = { load: definition => loaded.push(definition) }
 
 await import('../src/client.js')
 const exported = loaded[0].factory(require)
+const DICT = exported.__internals.DICT
+const LOCALE = process.env.LOCALE || 'zh'
+const translate = (key, values) => {
+  let text = DICT[LOCALE]?.[key] ?? key
+  if (values) for (const [name, value] of Object.entries(values)) text = text.replaceAll(`{${name}}`, String(value))
+  return text
+}
 const calls = []
 const ctx = {
   effect(fn) { const dispose = fn(); return () => { if (typeof dispose === 'function') dispose() } },
@@ -67,9 +82,9 @@ const Boundary = class extends React.Component {
 }
 const { act } = require('react-dom/test-utils')
 const root = createRoot(document.getElementById('root'))
-await act(async () => { root.render(React.createElement(Boundary, null, React.createElement(view.component, { t: k => k, sessionId: 'session-test' }))) })
+await act(async () => { root.render(React.createElement(Boundary, null, React.createElement(view.component, { t: translate, sessionId: 'session-test' }))) })
 await act(async () => { await new Promise(r => setTimeout(r, 100)) })
-const drawer = [...document.querySelectorAll('div')].filter(d => d.textContent.trim() === 'graphTitle').pop()
+const drawer = [...document.querySelectorAll('div')].filter(d => d.textContent.trim() === translate('graphTitle')).pop()
 console.log('drawer found:', Boolean(drawer))
 if (drawer) await act(async () => { drawer.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
 await act(async () => { await new Promise(r => setTimeout(r, 300)) })
@@ -90,14 +105,52 @@ if (fileRow) await act(async () => { fileRow.dispatchEvent(new dom.window.MouseE
 await act(async () => { await new Promise(r => setTimeout(r, 300)) })
 console.log('COMMIT-DIFF FETCHED:', fetched.some(h => h.includes('/commit-diff')))
 console.log('GRAPH PATHS:', fetched.filter(h => h.includes('/graph')).map(h => new dom.window.URL(h).searchParams.get('path')))
+const unstageAll = [...document.querySelectorAll('button')].find(button => button.title === translate('unstageAll'))
+console.log('UNSTAGE-ALL BTN:', Boolean(unstageAll))
+if (unstageAll) {
+  await act(async () => { unstageAll.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 50)) })
+  console.log('TOOLTIP:', (document.body.textContent || '').includes(translate('unstageAll')))
+}
 console.log('CHANGES-TEXT:', (document.body.textContent || '').replace(/\s+/g, ' ').slice(0, 500))
 const buttons = [...document.querySelectorAll('button')]
 console.log('buttons:', buttons.map(b => b.textContent).filter(Boolean).slice(0, 12))
-const tab = buttons.find(b => b.textContent.startsWith('files'))
+const tab = buttons.find(b => b.textContent === translate('filesTab') || b.textContent.startsWith('files'))
+const picker = [...document.querySelectorAll('button')].find(button => button.title === translate('selectCommit'))
+console.log('COMMIT PICKER:', Boolean(picker))
+if (picker) {
+  await act(async () => { picker.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  const commitItem = [...document.querySelectorAll('button')].find(button => button.textContent.includes('test commit'))
+  if (commitItem) await act(async () => { commitItem.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 200)) })
+  console.log('COMMIT VIEW:', (document.body.textContent || '').includes('src/b.ts'))
+  const collapseBtn = [...document.querySelectorAll('button')].find(button => button.textContent === translate('collapseAllFiles'))
+  console.log('COLLAPSE ALL BTN:', Boolean(collapseBtn))
+  if (collapseBtn) await act(async () => { collapseBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+  console.log('COLLAPSED:', (document.body.textContent || '').includes('another line') === false)
+}
 console.log('files tab found:', Boolean(tab))
 if (tab) await act(async () => { tab.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
 await act(async () => { await new Promise(r => setTimeout(r, 200)) })
 console.log('TEXT:', (document.body.textContent || '').replace(/\s+/g, ' ').slice(0, 400))
+const imgCandidates = [...document.querySelectorAll('div')].filter(d => d.textContent.includes('icon.svg'))
+console.log('ICON SVG COUNT:', document.querySelectorAll('span > svg').length)
+const ctxRow = [...document.querySelectorAll('div')].filter(d => d.textContent.trim() === 'icon.svg').pop()
+if (ctxRow) await act(async () => { ctxRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 120 })) })
+await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+console.log('CTX MENU HAS COPY:', (document.body.textContent || '').includes(translate('copyPath')), (document.body.textContent || '').includes(translate('copyFolderPath')))
+const ctxFolder = [...document.querySelectorAll('div')].filter(d => d.textContent.trim().startsWith('src') && d.textContent.length < 6).pop()
+if (ctxFolder) await act(async () => { ctxFolder.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 160 })) })
+await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+console.log('CTX MENU FOLDER:', (document.body.textContent || '').includes(translate('copyFolderPath')))
+console.log('IMG CANDIDATES:', imgCandidates.length)
+const imgRow = imgCandidates[imgCandidates.length - 1]
+if (imgRow) await act(async () => { imgRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+await act(async () => { await new Promise(r => setTimeout(r, 200)) })
+console.log('IMG SRCS:', JSON.stringify([...document.querySelectorAll('img')].map(img => img.getAttribute('src'))))
+
 console.log('BOUNDARY:', (document.getElementById('boundary')?.textContent || 'none').slice(0, 2000))
 console.log('ERRORS:', JSON.stringify(errors.slice(0, 5), null, 1).slice(0, 2500))
 root.unmount()
