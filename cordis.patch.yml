@@ -1,0 +1,4 @@
+# dsh-git-assistant bundle patch: inserts the plugin row; configuration is optional for now.
+- insert:
+    - id: git-assistant
+      name: dsh-git-assistant

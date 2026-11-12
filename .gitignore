@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.pnpm-store/
+.DS_Store
+*.log
+
+# Heavy research / vendor artifacts kept local only
+research/catalog/
+research/build-probe/repo/
+research/build-probe/repo-022/
+research/build-probe/repo-022-patched/
+research/build-probe/*/node_modules/
+research/upstream/
+plugin/dsh-superagent/node_modules/
+
+# Binary design references kept local
+research/assets/
