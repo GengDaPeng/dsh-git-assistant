@@ -19,6 +19,97 @@ window.__ModuleLoader__.load({
     const ID = 'dsh-git-assistant'
     const STORAGE_REPOSITORY = 'dsh-git-assistant:repository'
     const POLL_MS = 5000
+    const SHARED_STATE = new Map()
+    const SHARED_LISTENERS = new Set()
+
+    function useSharedState(key, initial) {
+      const [value, setValue] = useState(() => {
+        if (SHARED_STATE.has(key)) return SHARED_STATE.get(key)
+        const next = typeof initial === 'function' ? initial() : initial
+        SHARED_STATE.set(key, next)
+        return next
+      })
+      useEffect(() => {
+        const listener = () => setValue(SHARED_STATE.get(key))
+        SHARED_LISTENERS.add(listener)
+        return () => { SHARED_LISTENERS.delete(listener) }
+      }, [key])
+      const set = useCallback(next => {
+        const computed = typeof next === 'function' ? next(SHARED_STATE.get(key)) : next
+        SHARED_STATE.set(key, computed)
+        for (const listener of SHARED_LISTENERS) listener()
+      }, [key])
+      return [value, set]
+    }
+
+    const statusBus = new Map()
+    let statusLoop = null
+
+    function statusEntryOf(path) {
+      let entry = statusBus.get(path)
+      if (!entry) {
+        entry = { path, listeners: new Set(), state: { phase: 'idle', data: null, error: null }, inFlight: null, queued: false, failures: 0, lastFetch: 0 }
+        statusBus.set(path, entry)
+      }
+      return entry
+    }
+
+    function notifyStatus(entry) {
+      for (const listener of entry.listeners) listener(entry.state)
+    }
+
+    function loadStatusEntry(entry) {
+      if (entry.inFlight) { entry.queued = true; return }
+      entry.lastFetch = Date.now()
+      entry.inFlight = api('/status', { path: entry.path })
+        .then(data => {
+          entry.failures = 0
+          entry.state = { phase: 'ready', data, error: null }
+        })
+        .catch(error => {
+          entry.failures = Math.min(entry.failures + 1, 4)
+          entry.state = { phase: 'error', data: entry.state.data, error: String(error?.message ?? error) }
+        })
+        .finally(() => {
+          entry.inFlight = null
+          notifyStatus(entry)
+          if (entry.queued) { entry.queued = false; loadStatusEntry(entry) }
+        })
+    }
+
+    function ensureStatusLoop() {
+      if (statusLoop) return
+      statusLoop = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return
+        const now = Date.now()
+        for (const entry of statusBus.values()) {
+          if (entry.listeners.size === 0) continue
+          const backoff = entry.failures > 0 ? Math.min(60000, POLL_MS * 2 ** entry.failures) : POLL_MS
+          if (now - entry.lastFetch >= backoff) loadStatusEntry(entry)
+        }
+      }, POLL_MS)
+      statusLoop.unref?.()
+      const wake = () => {
+        if (typeof document !== 'undefined' && document.hidden) return
+        for (const entry of statusBus.values()) if (entry.listeners.size > 0) loadStatusEntry(entry)
+      }
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
+      if (typeof window !== 'undefined') window.addEventListener('focus', wake)
+    }
+
+    function subscribeStatus(path, listener) {
+      const entry = statusEntryOf(path)
+      entry.listeners.add(listener)
+      listener(entry.state)
+      ensureStatusLoop()
+      if (entry.listeners.size === 1) loadStatusEntry(entry)
+      return () => { entry.listeners.delete(listener) }
+    }
+
+    function refreshStatusPath(path) {
+      const entry = path ? statusBus.get(path) : undefined
+      if (entry) loadStatusEntry(entry)
+    }
     const MAX_DIFF_LINES = 6000
     const MAX_PREVIEW_LINES = 5000
 
@@ -29,7 +120,7 @@ window.__ModuleLoader__.load({
         issueDetailEmpty: '选择右侧的议题查看详情', issueNoIssues: '没有匹配的议题',
         issuesOpen: '打开', issuesClosed: '关闭', issuesAll: '全部',
         issueOpenInGitHub: '在 GitHub 打开', issueParent: '父议题', issueChildren: '子议题',
-        issueSearchPlaceholder: '搜索议题…', issueComments: '评论', issueUpdated: '更新', issueNoComments: '暂无评论',
+        issueSearchPlaceholder: '搜索议题…', issueComments: '评论', issueUpdated: '更新', issueNoComments: '暂无评论', loadMore: '加载更多',
         staged: '已暂存的更改', unstaged: '更改', untracked: '未跟踪',
         noRepos: '没有找到 Git 仓库', noReposHint: '在 DSH 里添加一个 Git 仓库目录作为工作区后，这里会列出来。',
         loading: '读取中…', refresh: '刷新', pickRepo: '选择仓库',
@@ -96,6 +187,7 @@ window.__ModuleLoader__.load({
         statsFiles: '{count} 个文件',
         unknownAuthor: '未知作者',
         cardRenderFailed: '卡片渲染失败：{error}',
+        panelRenderFailed: 'Git 面板渲染失败：{error}', retry: '重试',
         moreCommitActions: '更多提交方式',
         moreLines: '已显示 {shown} / {total} 行，继续滚动加载',
         selectCommit: '选择提交', unpushedCommits: '未推送的提交', noUnpushedCommits: '当前分支没有未推送的提交',
@@ -110,7 +202,7 @@ window.__ModuleLoader__.load({
         issueDetailEmpty: 'Select an issue on the right', issueNoIssues: 'No matching issues',
         issuesOpen: 'Open', issuesClosed: 'Closed', issuesAll: 'All',
         issueOpenInGitHub: 'Open in GitHub', issueParent: 'Parent', issueChildren: 'Children',
-        issueSearchPlaceholder: 'Search issues…', issueComments: 'comments', issueUpdated: 'updated', issueNoComments: 'No comments yet',
+        issueSearchPlaceholder: 'Search issues…', issueComments: 'comments', issueUpdated: 'updated', issueNoComments: 'No comments yet', loadMore: 'Load more',
         staged: 'Staged changes', unstaged: 'Changes', untracked: 'Untracked',
         noRepos: 'No Git repository found', noReposHint: 'Add the directory of a Git repository as a DSH workspace and it appears here.',
         loading: 'Loading…', refresh: 'Refresh', pickRepo: 'Pick repository',
@@ -177,6 +269,7 @@ window.__ModuleLoader__.load({
         statsFiles: '{count} files',
         unknownAuthor: 'Unknown author',
         cardRenderFailed: 'Card render failed: {error}',
+        panelRenderFailed: 'Git panel failed to render: {error}', retry: 'Retry',
         moreCommitActions: 'More commit actions',
         moreLines: 'Showing {shown} / {total} lines — scroll to load more',
         selectCommit: 'Select commit', unpushedCommits: 'Unpushed commits', noUnpushedCommits: 'No unpushed commits on this branch',
@@ -531,25 +624,15 @@ window.__ModuleLoader__.load({
 
     function useStatus(repository, dataVersion) {
       const [state, setState] = useState({ phase: 'idle', data: null, error: null })
-      const [tick, setTick] = useState(0)
       const path = repository?.path
       useEffect(() => {
         if (!path) { setState({ phase: 'idle', data: null, error: null }); return undefined }
-        let live = true
-        setState(previous => ({ phase: previous.data ? 'refreshing' : 'loading', data: previous.data, error: null }))
-        api('/status', { path })
-          .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
-          .catch(error => { if (live) setState(previous => ({ phase: 'error', data: previous.data, error: String(error?.message ?? error) })) })
-        return () => { live = false }
-      }, [path, tick, dataVersion])
-      useEffect(() => {
-        if (!path) return undefined
-        const timer = setInterval(() => { if (!document.hidden) setTick(value => value + 1) }, POLL_MS)
-        const wake = () => setTick(value => value + 1)
-        window.addEventListener('focus', wake)
-        return () => { clearInterval(timer); window.removeEventListener('focus', wake) }
+        return subscribeStatus(path, setState)
       }, [path])
-      return [state, () => setTick(value => value + 1)]
+      useEffect(() => {
+        if (path && dataVersion > 0) refreshStatusPath(path)
+      }, [path, dataVersion])
+      return [state, () => refreshStatusPath(path)]
     }
 
     function useBranches(repository, dataVersion) {
@@ -664,49 +747,11 @@ window.__ModuleLoader__.load({
 
     function useStatusAt(path, enabled) {
       const [state, setState] = useState({ phase: 'idle', data: null, error: null })
-      const [version, setVersion] = useState(0)
-      const failuresRef = useRef(0)
       useEffect(() => {
-        if (!path) { setState({ phase: 'idle', data: null, error: null }); return undefined }
-        if (!enabled) return undefined
-        let live = true
-        let timer
-        const tick = async () => {
-          if (!live) return
-          if (typeof document !== 'undefined' && document.hidden) {
-            timer = setTimeout(tick, POLL_MS)
-            return
-          }
-          try {
-            const data = await api('/status', { path })
-            if (!live) return
-            failuresRef.current = 0
-            setState({ phase: 'ready', data, error: null })
-          } catch (error) {
-            if (!live) return
-            failuresRef.current = Math.min(failuresRef.current + 1, 4)
-            setState(previous => ({ ...previous, phase: 'error', error: String(error?.message ?? error) }))
-          }
-          const backoff = failuresRef.current > 0 ? Math.min(60000, POLL_MS * 2 ** failuresRef.current) : POLL_MS
-          timer = setTimeout(tick, backoff)
-        }
-        const wake = () => {
-          if (typeof document !== 'undefined' && document.hidden) return
-          clearTimeout(timer)
-          tick()
-        }
-        setState(previous => ({ ...previous, phase: previous.data ? 'ready' : 'loading' }))
-        tick()
-        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
-        if (typeof window !== 'undefined') window.addEventListener('focus', wake)
-        return () => {
-          live = false
-          clearTimeout(timer)
-          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake)
-          if (typeof window !== 'undefined') window.removeEventListener('focus', wake)
-        }
-      }, [path, enabled, version])
-      return [state, () => { failuresRef.current = 0; setVersion(value => value + 1) }]
+        if (!path || !enabled) return undefined
+        return subscribeStatus(path, setState)
+      }, [path, enabled])
+      return [state, () => refreshStatusPath(path)]
     }
 
     /** One worktree is one complete operable area: header, commit box, staged/changed lists. */
@@ -881,6 +926,13 @@ window.__ModuleLoader__.load({
     }
 
     /** Multi-file diff for one commit: file cards with collapse, wrap and per-file diff. */
+    function CommitFileDiff({ context, entry, view, wrap, t }) {
+      const state = useCommitFileDiff(context, entry.path)
+      if (state.phase === 'loading') return h('div', { style: { padding: '8px 14px', color: T.muted, fontSize: 11.5 } }, t('loading'))
+      if (state.phase === 'error') return h('div', { style: { padding: '8px 14px', color: T.error, fontSize: 11.5 } }, state.error)
+      return h(DiffLines, { file: state.data?.files ?? [], view, t, wrap, embedded: true, context })
+    }
+
     function CommitFilesView({ state, view, wrap, t, collapseMode, context }) {
       const [collapsed, setCollapsed] = useState(() => new Set())
       const files = state.data?.files ?? []
@@ -930,7 +982,7 @@ window.__ModuleLoader__.load({
             isCollapsed
               ? null
               : h('div', { style: { padding: '2px 0 6px' } },
-                  h(DiffLines, { file: [entry], view, t, wrap, embedded: true, context })))
+                  h(CommitFileDiff, { context, entry, view, wrap, t })))
         }))
     }
 
@@ -1176,7 +1228,7 @@ window.__ModuleLoader__.load({
                       h(MarkdownBody, { text: comment.body }))))))
     }
 
-    function IssuesPane({ t, state, selectedNumber, onSelect, search, onSearch, stateFilter, onStateFilter, onRefresh }) {
+    function IssuesPane({ t, state, selectedNumber, onSelect, search, onSearch, stateFilter, onStateFilter, onRefresh, onLoadMore }) {
       const issues = state.issues ?? []
       const stateOptions = [['open', t('issuesOpen')], ['closed', t('issuesClosed')], ['all', t('issuesAll')]]
       return h('div', { style: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 } },
@@ -1226,7 +1278,17 @@ window.__ModuleLoader__.load({
                       key: issue.number, t, issue,
                       selected: selectedNumber === issue.number,
                       onClick: () => onSelect(selectedNumber === issue.number ? undefined : issue.number),
-                    })))))
+                    })),
+                  (state.total ?? issues.length) > issues.length
+                    ? h('div', { style: { gridColumn: '1 / -1', display: 'flex', justifyContent: 'center', padding: '4px 0 2px' } },
+                        h('button', {
+                          type: 'button', onClick: onLoadMore,
+                          style: {
+                            appearance: 'none', border: `0.5px solid ${T.border}`, borderRadius: T.pill,
+                            background: T.hover, color: T.ink2, fontSize: 11, padding: '4px 14px', cursor: 'pointer',
+                          },
+                        }, `${t('loadMore')} (${issues.length}/${state.total})`))
+                    : null)))
     }
 
     const LANE_COLORS = ['#60a5fa', '#fbbf24', '#34d399', '#f472b6', '#fb923c', '#38bdf8', '#a78bfa', '#f87171']
@@ -1657,6 +1719,33 @@ window.__ModuleLoader__.load({
       }
     }
 
+    class PanelBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { error: null } }
+      static getDerivedStateFromError(error) { return { error } }
+      render() {
+        if (this.state.error) {
+          const t = this.props.t ?? (key => key)
+          return h('div', {
+            style: {
+              flex: 1, minHeight: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 10, padding: 24, textAlign: 'center', color: T.muted, fontSize: 12,
+            },
+          },
+            h('div', { style: { fontSize: 13, color: T.error, maxWidth: 480, lineHeight: '20px' } },
+              t('panelRenderFailed', { error: String(this.state.error?.message ?? this.state.error) })),
+            h('button', {
+              type: 'button',
+              onClick: () => this.setState({ error: null }),
+              style: {
+                appearance: 'none', border: `0.5px solid ${T.border}`, borderRadius: T.pill,
+                padding: '4px 14px', fontSize: 11.5, cursor: 'pointer', background: T.hover, color: T.ink2,
+              },
+            }, t('retry')))
+        }
+        return this.props.children
+      }
+    }
+
     const IMAGE_PATH_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'svg'])
     function isImagePath(path) {
       const extension = String(path).split('.').pop()?.toLowerCase()
@@ -2081,7 +2170,7 @@ window.__ModuleLoader__.load({
         if (!path || !active) { setState({ phase: 'idle', data: null, error: null }); return undefined }
         let live = true
         setState({ phase: 'loading', data: null, error: null })
-        api('/commit-patch', { path, hash: selection.hash })
+        api('/commit', { path, hash: selection.hash })
           .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
           .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
         return () => { live = false }
@@ -2089,18 +2178,34 @@ window.__ModuleLoader__.load({
       return [state, () => setVersion(value => value + 1)]
     }
 
-    function useIssues(repository, enabled, stateFilter, query, version) {
-      const [state, setState] = useState({ phase: 'idle', issues: [], repo: null, error: null })
+    function useCommitFileDiff(context, file) {
+      const [state, setState] = useState({ phase: 'idle', data: null, error: null })
+      const path = context?.repoPath
+      const hash = context?.hash
+      useEffect(() => {
+        if (!path || !hash || !file) { setState({ phase: 'idle', data: null, error: null }); return undefined }
+        let live = true
+        setState({ phase: 'loading', data: null, error: null })
+        api('/commit-diff', { path, hash, file })
+          .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
+          .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [path, hash, file])
+      return state
+    }
+
+    function useIssues(repository, enabled, stateFilter, query, limit, version) {
+      const [state, setState] = useState({ phase: 'idle', issues: [], repo: null, total: 0, error: null })
       const path = repository?.path
       useEffect(() => {
         if (!path || !enabled) { setState(previous => ({ ...previous, phase: 'idle' })); return undefined }
         let live = true
         setState(previous => ({ ...previous, phase: previous.issues.length ? 'ready' : 'loading', error: null }))
-        api('/issues', { path, state: stateFilter, search: query, limit: 60, refresh: version > 0 ? '1' : '' })
-          .then(data => { if (live) setState({ phase: 'ready', issues: Array.isArray(data?.issues) ? data.issues : [], repo: data?.repo ?? null, error: null }) })
+        api('/issues', { path, state: stateFilter, search: query, limit, refresh: version > 0 ? '1' : '' })
+          .then(data => { if (live) setState({ phase: 'ready', issues: Array.isArray(data?.issues) ? data.issues : [], repo: data?.repo ?? null, total: Number(data?.total) || (Array.isArray(data?.issues) ? data.issues.length : 0), error: null }) })
           .catch(error => { if (live) setState(previous => ({ ...previous, phase: 'error', error: String(error?.message ?? error) })) })
         return () => { live = false }
-      }, [path, enabled, stateFilter, query, version])
+      }, [path, enabled, stateFilter, query, limit, version])
       return state
     }
 
@@ -2701,12 +2806,12 @@ window.__ModuleLoader__.load({
     function Panel({ t, ctx, sessionId, renderFactorySlot, inputActions }) {
       useCodePalette()
       const [repositories, refreshRepositories] = useRepositories()
-      const [storedId, setStoredId] = useState(readStoredRepository)
+      const [storedId, setStoredId] = useSharedState('repositoryId', readStoredRepository)
       const [dataVersion, setDataVersion] = useState(0)
       const bump = useCallback(() => setDataVersion(value => value + 1), [])
-      const [mode, setMode] = useState('changes')
-      const [selection, setSelection] = useState(null)
-      const [view, setView] = useState('unified')
+      const [mode, setMode] = useSharedState('mode', 'changes')
+      const [selection, setSelection] = useSharedState('selection', null)
+      const [view, setView] = useSharedState('view', 'unified')
       const [commitMessage, setCommitMessage] = useState('')
       const [amend, setAmend] = useState(false)
       const [commitMenu, setCommitMenu] = useState(false)
@@ -2725,11 +2830,12 @@ window.__ModuleLoader__.load({
       const [commitPickerOpen, setCommitPickerOpen] = useState(false)
       const commitPickerRef = useRef(null)
       const [allFilesCollapsed, setAllFilesCollapsed] = useState(false)
-      const [issuesState, setIssuesState] = useState('open')
-      const [issuesSearch, setIssuesSearch] = useState('')
+      const [issuesState, setIssuesState] = useSharedState('issuesState', 'open')
+      const [issuesSearch, setIssuesSearch] = useSharedState('issuesSearch', '')
       const [issuesQuery, setIssuesQuery] = useState('')
-      const [issueNumber, setIssueNumber] = useState(undefined)
+      const [issueNumber, setIssueNumber] = useSharedState('issueNumber', undefined)
       const [issuesVersion, setIssuesVersion] = useState(0)
+      const [issuesLimit, setIssuesLimit] = useState(60)
       const [issuesWidth, setIssuesWidth] = useState(480)
       const [quoteText, setQuoteText] = useState(undefined)
       const [quoteAnchor, setQuoteAnchor] = useState(undefined)
@@ -2780,7 +2886,7 @@ window.__ModuleLoader__.load({
       const [worktrees, refreshWorktrees] = useWorktrees(active, dataVersion)
       const [localCommits, refreshLocalCommits] = useLocalCommits(active, commitPickerOpen)
       const [commitPatch, refreshCommitPatch] = useCommitPatch(active, selection)
-      const issues = useIssues(active, mode === 'issues', issuesState, issuesQuery, issuesVersion)
+      const issues = useIssues(active, mode === 'issues', issuesState, issuesQuery, issuesLimit, issuesVersion)
       const issueDetail = useIssueDetail(active, issueNumber)
       const issueComments = useIssueComments(active, issueNumber)
       useEffect(() => {
@@ -2812,6 +2918,7 @@ window.__ModuleLoader__.load({
         const timer = setTimeout(() => setIssuesQuery(issuesSearch.trim()), 350)
         return () => clearTimeout(timer)
       }, [issuesSearch])
+      useEffect(() => { setIssuesLimit(60) }, [issuesState, issuesQuery, active?.path])
       useEffect(() => {
         if (!commitMenu) return undefined
         const close = event => { if (commitMenuRef.current && !commitMenuRef.current.contains(event.target)) setCommitMenu(false) }
@@ -3357,6 +3464,7 @@ window.__ModuleLoader__.load({
             onSelect: setIssueNumber, search: issuesSearch, onSearch: setIssuesSearch,
             stateFilter: issuesState, onStateFilter: setIssuesState,
             onRefresh: () => setIssuesVersion(value => value + 1),
+            onLoadMore: () => setIssuesLimit(value => value + 60),
           }) : h('div', {
             style: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 },
           },
@@ -3586,7 +3694,7 @@ window.__ModuleLoader__.load({
         }
         return () => { try { dispose?.() } catch { /* already gone */ } }
       }, [ctx, sessionId])
-      return h(Panel, { t, ctx, sessionId, renderFactorySlot, inputActions })
+      return h(PanelBoundary, { t }, h(Panel, { t, ctx, sessionId, renderFactorySlot, inputActions }))
     }
 
     /* ── registration ───────────────────────────────────────────────── */
@@ -3599,7 +3707,7 @@ window.__ModuleLoader__.load({
 
       ctx.slots.inject('main', () => ctx.slots.register(
         { name: 'main', key: ID, locale: NS },
-        props => h(Panel, { t: props?.t ?? t, ctx, renderFactorySlot: props?.renderFactorySlot, inputActions: props?.inputActions })))
+        props => h(PanelBoundary, { t: props?.t ?? t }, h(Panel, { t: props?.t ?? t, ctx, renderFactorySlot: props?.renderFactorySlot, inputActions: props?.inputActions }))))
       ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
         { name: 'sidebar.panellist', id: ID, order: 24, label: () => t('label'), locale: NS },
         props => h(GitIcon, { size: props?.size })))
@@ -3609,7 +3717,7 @@ window.__ModuleLoader__.load({
       // Right-sidebar seat: same workbench as a per-session right column.
       ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
         { name: 'sidebar.right.pane.tab', key: ID, locale: NS },
-        props => h(Panel, { t: props?.t ?? t, ctx, sessionId: props?.sessionId, renderFactorySlot: props?.renderFactorySlot, inputActions: props?.inputActions })))
+        props => h(PanelBoundary, { t: props?.t ?? t }, h(Panel, { t: props?.t ?? t, ctx, sessionId: props?.sessionId, renderFactorySlot: props?.renderFactorySlot, inputActions: props?.inputActions }))))
       const tabs = typeof ctx.get === 'function' ? ctx.get('sidebarRightTabs') : ctx.sidebarRightTabs
       if (tabs && typeof tabs.register === 'function') {
         ctx.effect(() => tabs.register({
