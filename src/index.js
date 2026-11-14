@@ -675,13 +675,13 @@ function ensureIssuePolling() {
 }
 
 function issueStoreResult(store, state, limit) {
-  const issues = [...store.issues.values()]
+  const matching = [...store.issues.values()]
     .filter(issue => state === 'all' || issue.state === state)
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
-    .slice(0, limit)
   return {
     repo: store.repo,
-    issues,
+    issues: matching.slice(0, limit),
+    total: matching.length,
     stale: Date.now() - store.checkedAt > ISSUE_STORE_TTL,
   }
 }
@@ -1284,7 +1284,7 @@ export function apply(ctx) {
           if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
           const state = ['open', 'closed', 'all'].includes(url.searchParams.get('state')) ? url.searchParams.get('state') : 'open'
           const search = (url.searchParams.get('search') ?? '').trim()
-          const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 50))
+          const limit = Math.max(1, Math.min(300, Number(url.searchParams.get('limit')) || 50))
           const force = url.searchParams.get('refresh') === '1'
           const full = url.searchParams.get('full') === '1'
           try {
@@ -1293,6 +1293,7 @@ export function apply(ctx) {
               const cached = force ? undefined : issueCacheGet(cacheKey)
               if (cached !== undefined) { json(res, 200, cached); return }
               const result = await issuesOf(target.path, state, search, limit)
+              result.total = (result.issues ?? []).length
               issueCacheSet(cacheKey, result)
               json(res, 200, result)
               return
