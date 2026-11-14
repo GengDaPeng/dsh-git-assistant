@@ -25,7 +25,11 @@ window.__ModuleLoader__.load({
     const DICT = {
       zh: {
         label: 'Git', title: 'Git 工作台',
-        changesTab: '更改', filesTab: '文件',
+        changesTab: '更改', filesTab: '文件', issuesTab: '议题',
+        issueDetailEmpty: '选择右侧的议题查看详情', issueNoIssues: '没有匹配的议题',
+        issuesOpen: '打开', issuesClosed: '关闭', issuesAll: '全部',
+        issueOpenInGitHub: '在 GitHub 打开', issueParent: '父议题', issueChildren: '子议题',
+        issueSearchPlaceholder: '搜索议题…', issueComments: '评论', issueUpdated: '更新', issueNoComments: '暂无评论',
         staged: '已暂存的更改', unstaged: '更改', untracked: '未跟踪',
         noRepos: '没有找到 Git 仓库', noReposHint: '在 DSH 里添加一个 Git 仓库目录作为工作区后，这里会列出来。',
         loading: '读取中…', refresh: '刷新', pickRepo: '选择仓库',
@@ -102,7 +106,11 @@ window.__ModuleLoader__.load({
       },
       en: {
         label: 'Git', title: 'Git Workbench',
-        changesTab: 'Changes', filesTab: 'Files',
+        changesTab: 'Changes', filesTab: 'Files', issuesTab: 'Issues',
+        issueDetailEmpty: 'Select an issue on the right', issueNoIssues: 'No matching issues',
+        issuesOpen: 'Open', issuesClosed: 'Closed', issuesAll: 'All',
+        issueOpenInGitHub: 'Open in GitHub', issueParent: 'Parent', issueChildren: 'Children',
+        issueSearchPlaceholder: 'Search issues…', issueComments: 'comments', issueUpdated: 'updated', issueNoComments: 'No comments yet',
         staged: 'Staged changes', unstaged: 'Changes', untracked: 'Untracked',
         noRepos: 'No Git repository found', noReposHint: 'Add the directory of a Git repository as a DSH workspace and it appears here.',
         loading: 'Loading…', refresh: 'Refresh', pickRepo: 'Pick repository',
@@ -924,6 +932,301 @@ window.__ModuleLoader__.load({
               : h('div', { style: { padding: '2px 0 6px' } },
                   h(DiffLines, { file: [entry], view, t, wrap, embedded: true, context })))
         }))
+    }
+
+    const MD_INLINE_CODE = { fontFamily: MONO, fontSize: '0.92em', padding: '0 4px', borderRadius: 4, background: T.hover }
+    const MD_PRE = { margin: '6px 0', padding: '8px 10px', borderRadius: T.rSm, background: T.hover, overflowX: 'auto', fontFamily: MONO, fontSize: 11, lineHeight: '17px' }
+
+    function markdownInline(text, keyPrefix) {
+      const tokens = String(text ?? '').split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\*[^*\n]+\*|_[^_\n]+_|!\[[^\]]*\]\([^)\s]+\)|\[[^\]]+\]\([^)\s]+\))/g)
+      return tokens.filter(Boolean).map((token, index) => {
+        const key = `${keyPrefix}:${index}`
+        if (/^`[^`]+`$/.test(token)) return h('code', { key, style: MD_INLINE_CODE }, token.slice(1, -1))
+        if (/^\*\*[^*]+\*\*$/.test(token) || /^__[^_]+__$/.test(token)) return h('strong', { key }, token.slice(2, -2))
+        if (/^~~[^~]+~~$/.test(token)) return h('del', { key }, token.slice(2, -2))
+        if (/^\*[^*]+\*$/.test(token) || /^_[^_]+_$/.test(token)) return h('em', { key }, token.slice(1, -1))
+        const image = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(token)
+        if (image) return h('img', { key, src: image[2], alt: image[1], style: { maxWidth: '100%', borderRadius: 6, display: 'block', margin: '4px 0' } })
+        const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token)
+        if (link) return h('a', { key, href: link[2], target: '_blank', rel: 'noreferrer', style: { color: T.accent } }, link[1])
+        return token
+      })
+    }
+
+    function markdownCells(line) {
+      return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim())
+    }
+
+    function markdownBlocks(text) {
+      const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n')
+      const blocks = []
+      let index = 0
+      let key = 0
+      while (index < lines.length) {
+        const line = lines[index]
+        if (!line.trim()) { index += 1; continue }
+        if (/^```/.test(line)) {
+          index += 1
+          const code = []
+          while (index < lines.length && !/^```/.test(lines[index])) code.push(lines[index++])
+          index += 1
+          blocks.push(h('pre', { key: key++, style: MD_PRE }, h('code', { style: { fontFamily: MONO } }, code.join('\n'))))
+          continue
+        }
+        const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+        if (heading) {
+          const level = heading[1].length
+          blocks.push(h('div', {
+            key: key++,
+            style: { fontSize: Math.max(13, 20 - (level - 1) * 2), fontWeight: 600, lineHeight: '1.4', margin: '10px 0 4px', color: T.text },
+          }, markdownInline(heading[2], `h${key}`)))
+          index += 1
+          continue
+        }
+        if (/^\s*(---+|___+|\*\*\*+)\s*$/.test(line)) {
+          blocks.push(h('hr', { key: key++, style: { border: 'none', borderTop: `0.5px solid ${T.borderSoft}`, margin: '10px 0' } }))
+          index += 1
+          continue
+        }
+        if (/^\s*>\s?/.test(line)) {
+          const quoted = []
+          while (index < lines.length && /^\s*>\s?/.test(lines[index])) quoted.push(lines[index++].replace(/^\s*>\s?/, ''))
+          blocks.push(h('blockquote', { key: key++, style: { margin: '6px 0', padding: '2px 10px', borderLeft: `2px solid ${T.border}`, color: T.ink2 } }, markdownBlocks(quoted.join('\n'))))
+          continue
+        }
+        if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+          const ordered = /^\s*\d+\./.test(line)
+          const items = []
+          while (index < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[index])) {
+            const match = /^\s*(?:[-*+]|\d+\.)\s+(.*)$/.exec(lines[index])
+            items.push(match ? match[1] : '')
+            index += 1
+          }
+          blocks.push(h(ordered ? 'ol' : 'ul', { key: key++, style: { margin: '4px 0', paddingLeft: 20 } },
+            items.map((item, itemIndex) => h('li', { key: itemIndex, style: { margin: '1px 0' } }, markdownInline(item, `li${key}:${itemIndex}`)))))
+          continue
+        }
+        if (/\|/.test(line) && index + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[index + 1])) {
+          const header = markdownCells(line)
+          const rows = []
+          index += 2
+          while (index < lines.length && /\|/.test(lines[index]) && lines[index].trim()) rows.push(markdownCells(lines[index++]))
+          const headRow = h('tr', null, header.map((cell, cellIndex) => h('th', {
+            key: cellIndex,
+            style: { textAlign: 'left', padding: '3px 8px', border: `0.5px solid ${T.borderSoft}`, background: T.hover, fontWeight: 600, whiteSpace: 'nowrap' },
+          }, markdownInline(cell, `th${key}:${cellIndex}`))))
+          const bodyRows = rows.map((cells, rowIndex) => h('tr', { key: rowIndex },
+            cells.map((cell, cellIndex) => h('td', {
+              key: cellIndex,
+              style: { padding: '3px 8px', border: `0.5px solid ${T.borderSoft}`, verticalAlign: 'top' },
+            }, markdownInline(cell, `td${key}:${rowIndex}:${cellIndex}`)))))
+          blocks.push(h('div', { key: key++, style: { overflowX: 'auto', margin: '6px 0' } },
+            h('table', { style: { borderCollapse: 'collapse', fontSize: 11.5, width: '100%' } },
+              h('thead', null, headRow),
+              h('tbody', null, bodyRows))))
+          continue
+        }
+        const paragraph = [line]
+        index += 1
+        while (index < lines.length && lines[index].trim() && !/^(#{1,6})\s|^```|^\s*>|^\s*([-*+]|\d+\.)\s|^\s*(---+)|\|/.test(lines[index])) {
+          paragraph.push(lines[index++])
+        }
+        blocks.push(h('p', { key: key++, style: { margin: '4px 0', lineHeight: '1.65' } },
+          paragraph.map((part, partIndex) => h('span', { key: partIndex }, markdownInline(part, `p${key}:${partIndex}`), partIndex < paragraph.length - 1 ? h('br') : null))))
+      }
+      return blocks
+    }
+
+    function MarkdownBody({ text }) {
+      return h('div', { style: { fontSize: 12.5, lineHeight: '1.6', color: T.ink2, wordBreak: 'break-word' } }, markdownBlocks(text))
+    }
+
+    function issueStateColor(value) {
+      return value === 'open' ? T.success : '#a371f7'
+    }
+
+    function labelChipStyle(color) {
+      const hex = String(color ?? '').replace(/^#/, '')
+      let dark = true
+      if (/^[0-9a-f]{6}$/i.test(hex)) {
+        const red = parseInt(hex.slice(0, 2), 16)
+        const green = parseInt(hex.slice(2, 4), 16)
+        const blue = parseInt(hex.slice(4, 6), 16)
+        dark = 0.2126 * red + 0.7152 * green + 0.0722 * blue < 140
+      }
+      const base = /^[0-9a-f]{6}$/i.test(hex) ? `#${hex}` : 'currentColor'
+      return { background: `color-mix(in srgb, ${base} 18%, transparent)`, color: dark ? base : `color-mix(in srgb, ${base} 78%, #fff)`, border: `0.5px solid color-mix(in srgb, ${base} 40%, transparent)` }
+    }
+
+    function IssueCard({ t, issue, selected, onClick }) {
+      const stateColor = issueStateColor(issue.state)
+      return h('div', {
+        role: 'button', tabIndex: 0,
+        onClick,
+        onKeyDown: event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick() } },
+        style: {
+          display: 'flex', flexDirection: 'column', gap: 7, padding: '9px 10px', minHeight: 104,
+          borderRadius: T.rMd, cursor: 'pointer', position: 'relative',
+          background: selected
+            ? `color-mix(in srgb, ${T.accent} 10%, var(--dsw-alias-bg-layer-2, transparent))`
+            : 'color-mix(in srgb, var(--dsw-alias-bg-layer-2, currentColor) 32%, transparent)',
+          border: `${selected ? '1.5px' : '0.5px'} solid ${selected ? T.accent : T.border}`,
+          boxShadow: selected ? T.shadowProminent : 'none',
+          transition: `border-color .15s ${T.ease}, background .15s ${T.ease}, box-shadow .15s ${T.ease}`,
+        },
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+          h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted } }, `#${issue.number}`),
+          h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: stateColor } }),
+          h('span', { style: { fontSize: 10, color: T.muted, textTransform: 'capitalize' } }, issue.state),
+          h('span', { style: { flex: 1 } }),
+          issue.comments > 0 ? h('span', { style: { fontSize: 10, color: T.subtle } }, `💬 ${issue.comments}`) : null,
+          h('span', { style: { fontSize: 10, color: T.subtle, whiteSpace: 'nowrap' } }, issue.updatedAt ? formatRelativeTime(Math.floor(new Date(issue.updatedAt).getTime() / 1000)) : '')),
+        h('div', {
+          style: {
+            fontSize: 12.5, fontWeight: 500, lineHeight: '18px', color: T.text,
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          },
+        }, issue.title),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
+          ...(issue.labels ?? []).slice(0, 3).map(label => h('span', {
+            key: label.name,
+            style: { fontSize: 9.5, padding: '0 6px', lineHeight: '16px', borderRadius: T.pill, whiteSpace: 'nowrap', ...labelChipStyle(label.color) },
+          }, label.name)),
+          (issue.labels?.length ?? 0) > 3 ? h('span', { style: { fontSize: 9.5, color: T.subtle } }, `+${issue.labels.length - 3}`) : null),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 'auto' } },
+          issue.parent
+            ? h('span', { style: { fontSize: 9.5, color: T.subtle, border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '0 6px', whiteSpace: 'nowrap' } }, `↑ #${issue.parent.number}`)
+            : null,
+          (issue.children?.length ?? 0) > 0
+            ? h('span', { style: { fontSize: 9.5, color: T.subtle, border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '0 6px', whiteSpace: 'nowrap' } }, `⌄ ${issue.children.length} ${t('issueChildren')}`)
+            : null,
+          h('span', { style: { flex: 1 } })))
+    }
+
+    function IssueDetailPane({ t, state, onNavigate, onClose, comments }) {
+      if (!state || state.phase === 'idle') {
+        return h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, color: T.muted, textAlign: 'center' } },
+          h('div', { style: { fontFamily: T.serif, fontSize: 16, color: T.ink2 } }, t('issueDetailEmpty')))
+      }
+      if (state.phase === 'loading') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
+      if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
+      const issue = state.data?.issue
+      if (!issue) return null
+      return h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: `0.5px solid ${T.borderSoft}`, flex: '0 0 auto' } },
+          h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted } }, `#${issue.number}`),
+          h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: issueStateColor(issue.state) } }),
+          h('span', { style: { fontSize: 10.5, color: T.muted } }, issue.state),
+          h('span', { style: { flex: 1 } }),
+          issue.url ? h('a', {
+            href: issue.url, target: '_blank', rel: 'noreferrer',
+            style: { fontSize: 10.5, color: T.accent, textDecoration: 'none' },
+          }, t('issueOpenInGitHub')) : null,
+          h('button', {
+            type: 'button', onClick: onClose, title: '×',
+            style: { appearance: 'none', border: 'none', background: 'transparent', color: T.muted, cursor: 'pointer', fontSize: 15, padding: '0 4px' },
+          }, '×')),
+        h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 12px 16px', display: 'flex', flexDirection: 'column', gap: 9 } },
+          h('div', { style: { fontSize: 15, lineHeight: '22px', fontWeight: 600, color: T.text } }, issue.title),
+          h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
+            ...(issue.labels ?? []).map(label => h('span', {
+              key: label.name,
+              style: { fontSize: 10, padding: '0 7px', lineHeight: '17px', borderRadius: T.pill, whiteSpace: 'nowrap', ...labelChipStyle(label.color) },
+            }, label.name))),
+          h('div', { style: { display: 'flex', gap: 12, fontSize: 10.5, color: T.subtle, flexWrap: 'wrap' } },
+            h('span', null, `${issue.comments ?? 0} ${t('issueComments')}`),
+            issue.updatedAt ? h('span', null, `${t('issueUpdated')} ${formatRelativeTime(Math.floor(new Date(issue.updatedAt).getTime() / 1000))}`) : null,
+            issue.author ? h('span', null, `@${issue.author}`) : null),
+          (issue.parent || (issue.children?.length ?? 0) > 0)
+            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', borderRadius: T.rSm, background: T.hover } },
+                h('div', { style: { fontSize: 10, color: T.subtle } }, t('issueRelations')),
+                issue.parent
+                  ? h('button', {
+                      type: 'button', onClick: () => onNavigate?.(issue.parent.number),
+                      style: { appearance: 'none', border: 'none', background: 'transparent', color: T.accent, cursor: 'pointer', textAlign: 'left', padding: 0, fontSize: 11 },
+                    }, `${t('issueParent')}: #${issue.parent.number} ${issue.parent.title ?? ''}`)
+                  : null,
+                ...(issue.children ?? []).map(child => h('button', {
+                  key: child.number, type: 'button', onClick: () => onNavigate?.(child.number),
+                  style: { appearance: 'none', border: 'none', background: 'transparent', color: T.accent, cursor: 'pointer', textAlign: 'left', padding: 0, fontSize: 11 },
+                }, `${t('issueChildren')}: #${child.number} ${child.title ?? ''}`)))
+            : null,
+          issue.body
+            ? h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 9 } }, h(MarkdownBody, { text: issue.body }))
+            : null,
+          h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 9, display: 'flex', flexDirection: 'column', gap: 7 } },
+            h('div', { style: { fontSize: 10.5, color: T.muted, fontWeight: 600 } }, `${issue.comments ?? 0} ${t('issueComments')}`),
+            comments?.phase === 'loading'
+              ? h('div', { style: { fontSize: 11, color: T.muted } }, t('loading'))
+              : comments?.phase === 'error'
+                ? h('div', { style: { fontSize: 11, color: T.error } }, comments.error)
+                : (comments?.data?.comments ?? []).length === 0
+                  ? h('div', { style: { fontSize: 11, color: T.subtle } }, t('issueNoComments'))
+                  : (comments.data.comments).map(comment => h('div', {
+                      key: comment.id,
+                      style: {
+                        border: `0.5px solid ${T.borderSoft}`, borderRadius: T.rSm, padding: '7px 9px',
+                        background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 30%, transparent)',
+                      },
+                    },
+                      h('div', { style: { display: 'flex', gap: 8, fontSize: 10.5, color: T.subtle, marginBottom: 3 } },
+                        h('span', null, comment.author ? `@${comment.author}` : ''),
+                        comment.createdAt ? h('span', null, formatRelativeTime(Math.floor(new Date(comment.createdAt).getTime() / 1000))) : null),
+                      h(MarkdownBody, { text: comment.body }))))))
+    }
+
+    function IssuesPane({ t, state, selectedNumber, onSelect, search, onSearch, stateFilter, onStateFilter, onRefresh }) {
+      const issues = state.issues ?? []
+      const stateOptions = [['open', t('issuesOpen')], ['closed', t('issuesClosed')], ['all', t('issuesAll')]]
+      return h('div', { style: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 } },
+        h('div', {
+          style: {
+            flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '0 10px',
+            minWidth: 0, borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
+            boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)',
+          },
+        },
+          h('input', {
+            value: search, placeholder: t('issueSearchPlaceholder'),
+            onChange: event => onSearch(event.target.value),
+            style: {
+              flex: 1, minWidth: 80, height: 26, borderRadius: T.pill, padding: '0 11px', fontSize: 11.5, color: 'inherit',
+              background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 40%, transparent)',
+              border: `0.5px solid ${T.border}`, outline: 'none',
+            },
+          }),
+          h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: T.pill, background: T.hover, border: `0.5px solid ${T.borderSoft}` } },
+            stateOptions.map(([value, label]) => h('button', {
+              key: value, type: 'button', onClick: () => onStateFilter(value),
+              style: {
+                appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 10.5,
+                height: 22, padding: '0 10px', borderRadius: T.pill,
+                background: stateFilter === value ? T.card : 'transparent',
+                color: stateFilter === value ? T.text : T.muted,
+              },
+            }, label))),
+          h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.subtle } }, state.phase === 'ready' ? String(issues.length) : ''),
+          h(IconButton, { label: t('refresh'), onClick: onRefresh }, h(RefreshIcon, {}))),
+        h('div', {
+          style: {
+            flex: 1, minHeight: 0, overflowY: 'auto', borderRadius: T.rLg,
+            background: T.glass, border: `0.5px solid ${T.border}`, boxShadow: T.shadowSoft,
+            backdropFilter: 'blur(24px) saturate(160%)', padding: 10,
+          },
+        },
+          state.phase === 'loading' && issues.length === 0
+            ? h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
+            : state.phase === 'error'
+              ? h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
+              : issues.length === 0
+                ? h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('issueNoIssues'))
+                : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, alignContent: 'start' } },
+                    issues.map(issue => h(IssueCard, {
+                      key: issue.number, t, issue,
+                      selected: selectedNumber === issue.number,
+                      onClick: () => onSelect(selectedNumber === issue.number ? undefined : issue.number),
+                    })))))
     }
 
     const LANE_COLORS = ['#60a5fa', '#fbbf24', '#34d399', '#f472b6', '#fb923c', '#38bdf8', '#a78bfa', '#f87171']
@@ -1786,6 +2089,51 @@ window.__ModuleLoader__.load({
       return [state, () => setVersion(value => value + 1)]
     }
 
+    function useIssues(repository, enabled, stateFilter, query, version) {
+      const [state, setState] = useState({ phase: 'idle', issues: [], repo: null, error: null })
+      const path = repository?.path
+      useEffect(() => {
+        if (!path || !enabled) { setState(previous => ({ ...previous, phase: 'idle' })); return undefined }
+        let live = true
+        setState(previous => ({ ...previous, phase: previous.issues.length ? 'ready' : 'loading', error: null }))
+        api('/issues', { path, state: stateFilter, search: query, limit: 60, refresh: version > 0 ? '1' : '' })
+          .then(data => { if (live) setState({ phase: 'ready', issues: Array.isArray(data?.issues) ? data.issues : [], repo: data?.repo ?? null, error: null }) })
+          .catch(error => { if (live) setState(previous => ({ ...previous, phase: 'error', error: String(error?.message ?? error) })) })
+        return () => { live = false }
+      }, [path, enabled, stateFilter, query, version])
+      return state
+    }
+
+    function useIssueDetail(repository, number) {
+      const [state, setState] = useState({ phase: 'idle', data: null, error: null })
+      const path = repository?.path
+      useEffect(() => {
+        if (!path || !number) { setState({ phase: 'idle', data: null, error: null }); return undefined }
+        let live = true
+        setState({ phase: 'loading', data: null, error: null })
+        api('/issue', { path, number })
+          .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
+          .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [path, number])
+      return state
+    }
+
+    function useIssueComments(repository, number) {
+      const [state, setState] = useState({ phase: 'idle', data: null, error: null })
+      const path = repository?.path
+      useEffect(() => {
+        if (!path || !number) { setState({ phase: 'idle', data: null, error: null }); return undefined }
+        let live = true
+        setState({ phase: 'loading', data: null, error: null })
+        api('/issue-comments', { path, number })
+          .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
+          .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [path, number])
+      return state
+    }
+
     /* ── primitives ─────────────────────────────────────────────────── */
 
     function Chevron({ open, size = 10 }) {
@@ -2377,6 +2725,12 @@ window.__ModuleLoader__.load({
       const [commitPickerOpen, setCommitPickerOpen] = useState(false)
       const commitPickerRef = useRef(null)
       const [allFilesCollapsed, setAllFilesCollapsed] = useState(false)
+      const [issuesState, setIssuesState] = useState('open')
+      const [issuesSearch, setIssuesSearch] = useState('')
+      const [issuesQuery, setIssuesQuery] = useState('')
+      const [issueNumber, setIssueNumber] = useState(undefined)
+      const [issuesVersion, setIssuesVersion] = useState(0)
+      const [issuesWidth, setIssuesWidth] = useState(480)
       const [quoteText, setQuoteText] = useState(undefined)
       const [quoteAnchor, setQuoteAnchor] = useState(undefined)
       const rightCardRef = useRef(null)
@@ -2426,6 +2780,22 @@ window.__ModuleLoader__.load({
       const [worktrees, refreshWorktrees] = useWorktrees(active, dataVersion)
       const [localCommits, refreshLocalCommits] = useLocalCommits(active, commitPickerOpen)
       const [commitPatch, refreshCommitPatch] = useCommitPatch(active, selection)
+      const issues = useIssues(active, mode === 'issues', issuesState, issuesQuery, issuesVersion)
+      const issueDetail = useIssueDetail(active, issueNumber)
+      const issueComments = useIssueComments(active, issueNumber)
+      useEffect(() => {
+        if (!issues.stale) return undefined
+        const timer = setTimeout(() => setIssuesVersion(value => value + 1), 1200)
+        return () => clearTimeout(timer)
+      }, [issues.stale, issues.issues.length])
+      useEffect(() => {
+        if (mode !== 'issues' || !active?.path) return undefined
+        let live = true
+        const touch = () => { if (live) api('/issues/touch', { path: active.path }).catch(() => {}) }
+        touch()
+        const timer = setInterval(touch, 60000)
+        return () => { live = false; clearInterval(timer) }
+      }, [mode, active?.path])
 
       useEffect(() => {
         if (!commitPickerOpen) return undefined
@@ -2438,6 +2808,10 @@ window.__ModuleLoader__.load({
         setWrap(false)
         setAllFilesCollapsed(false)
       }, [selection?.hash])
+      useEffect(() => {
+        const timer = setTimeout(() => setIssuesQuery(issuesSearch.trim()), 350)
+        return () => clearTimeout(timer)
+      }, [issuesSearch])
       useEffect(() => {
         if (!commitMenu) return undefined
         const close = event => { if (commitMenuRef.current && !commitMenuRef.current.contains(event.target)) setCommitMenu(false) }
@@ -2705,11 +3079,14 @@ window.__ModuleLoader__.load({
           document.removeEventListener('dragend', onEnd, true)
         }
       }, [sessionId, active?.path])
+      const effectiveLeftWidth = mode === 'issues' ? issuesWidth : leftWidth
       const startResize = useCallback(event => {
         event.preventDefault()
         const startX = event.clientX
-        const startWidth = leftWidth
-        const move = moveEvent => setLeftWidth(Math.min(560, Math.max(240, startWidth + moveEvent.clientX - startX)))
+        const startWidth = mode === 'issues' ? issuesWidth : leftWidth
+        const applyWidth = mode === 'issues' ? setIssuesWidth : setLeftWidth
+        const maxWidth = mode === 'issues' ? 760 : 560
+        const move = moveEvent => applyWidth(Math.min(maxWidth, Math.max(240, startWidth + moveEvent.clientX - startX)))
         const stop = () => {
           document.removeEventListener('pointermove', move)
           document.removeEventListener('pointerup', stop)
@@ -2720,7 +3097,7 @@ window.__ModuleLoader__.load({
         document.body.style.userSelect = 'none'
         document.addEventListener('pointermove', move)
         document.addEventListener('pointerup', stop)
-      }, [leftWidth])
+      }, [leftWidth, issuesWidth, mode])
 
       const keyOf = file => file.__staged === undefined ? `f:${file.path}` : `${file.__staged ? 's' : 'w'}:${file.path}`
       const openDiff = (file, event) => {
@@ -2927,7 +3304,7 @@ window.__ModuleLoader__.load({
           // left column
           h('div', {
             style: {
-              width: leftWidth, flex: `0 0 ${leftWidth}px`, minWidth: 240, borderRadius: T.rLg, background: T.glass,
+              width: effectiveLeftWidth, flex: `0 0 ${effectiveLeftWidth}px`, minWidth: 240, borderRadius: T.rLg, background: T.glass,
               border: `0.5px solid ${T.border}`, boxShadow: T.shadowSoft,
               backdropFilter: 'blur(24px) saturate(160%)',
               display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden',
@@ -2941,7 +3318,7 @@ window.__ModuleLoader__.load({
                   background: T.hover, border: `0.5px solid ${T.borderSoft}`,
                 },
               },
-                ['changes', 'files'].map(value => h('button', {
+                ['changes', 'files', 'issues'].map(value => h('button', {
                   key: value, type: 'button', onClick: () => setMode(value),
                   style: {
                     appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 11.5,
@@ -2951,10 +3328,16 @@ window.__ModuleLoader__.load({
                     boxShadow: mode === value ? T.shadowSoft : 'none',
                     transition: `background .2s ${T.ease}, color .2s ${T.ease}`,
                   },
-                }, value === 'changes' ? t('changesTab') : t('filesTab'))))),
+                }, value === 'changes' ? t('changesTab') : value === 'files' ? t('filesTab') : t('issuesTab'))))),
 
             h('div', { style: { display: mode === 'changes' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 } }, worktreeCards),
             h('div', { style: { display: mode === 'files' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 } }, worktreeFilesCards),
+            h('div', { style: { display: mode === 'issues' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 } },
+              h(IssueDetailPane, {
+                t, state: issueDetail, comments: issueComments,
+                onNavigate: setIssueNumber,
+                onClose: () => setIssueNumber(undefined),
+              })),
           ),
 
           // commit graph drawer docked over the workbench column
@@ -2968,8 +3351,13 @@ window.__ModuleLoader__.load({
             onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
           }),
 
-          // right column: toolbar card + document card
-          h('div', {
+          // right column: document card or issues board
+          mode === 'issues' ? h(IssuesPane, {
+            t, state: issues, selectedNumber: issueNumber,
+            onSelect: setIssueNumber, search: issuesSearch, onSearch: setIssuesSearch,
+            stateFilter: issuesState, onStateFilter: setIssuesState,
+            onRefresh: () => setIssuesVersion(value => value + 1),
+          }) : h('div', {
             style: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 },
           },
             h('div', {
