@@ -33,6 +33,13 @@ globalThis.fetch = async url => {
     : href.includes('/files') ? { files: ['a.ts', 'src/b.ts', 'images/logo.png', 'icon.svg'], total: 4, truncated: false }
     : href.includes('/file') ? { path: 'a.ts', content: 'hello', size: 5, binary: false }
     : href.includes('/branches') ? { local: [], remote: [], detached: false }
+    : href.includes('/issues') ? { repo: { owner: 'x', name: 'y' }, issues: [
+        { number: 101, title: '父议题标题', state: 'open', labels: [{ name: 'bug', color: 'd73a4a' }], assignees: [], comments: 2, updatedAt: '2026-11-10T10:00:00Z', url: 'https://github.com/x/y/issues/101', parent: null, children: [{ number: 102, title: '子议题标题', state: 'open' }] },
+        { number: 102, title: '子议题标题', state: 'open', labels: [], assignees: [], comments: 0, updatedAt: '2026-11-09T10:00:00Z', url: 'https://github.com/x/y/issues/102', parent: { number: 101, title: '父议题标题', state: 'open' }, children: [] },
+        { number: 103, title: '无关议题', state: 'open', labels: [], assignees: [], comments: 0, updatedAt: '2026-11-08T10:00:00Z', url: 'https://github.com/x/y/issues/103', parent: null, children: [] },
+      ] }
+    : href.includes('/issue-comments') ? { comments: [{ id: 1, author: 'bob', body: '评论 **内容**', createdAt: '2026-11-09T10:00:00Z', url: '' }] }
+    : href.includes('/issue?') ? { repo: { owner: 'x', name: 'y' }, issue: { number: 101, title: '父议题标题', state: 'open', body: '## 小节标题\n\n这是 **加粗** 和 [链接](https://example.com)。', labels: [{ name: 'bug', color: 'd73a4a' }], assignees: [], author: 'a', comments: 2, createdAt: '2026-11-01T10:00:00Z', updatedAt: '2026-11-10T10:00:00Z', url: 'https://github.com/x/y/issues/101', milestone: null, parent: null, children: [{ number: 102, title: '子议题标题', state: 'open' }] } }
     : href.includes('/local-commits') ? { commits: [{ oid: 'abc1234def', author: 'A', time: 1700000000, subject: 'test commit' }] }
     : href.includes('/commit-patch') ? { commit: { hash: 'abc1234def', subject: 'test commit' }, stats: { files: 2, additions: 3, deletions: 1 }, files: [
         { path: 'a.ts', status: 'M', additions: 2, deletions: 1, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'added line', oldNumber: 1, newNumber: 1 }] }] },
@@ -130,6 +137,26 @@ if (picker) {
   if (collapseBtn) await act(async () => { collapseBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
   await act(async () => { await new Promise(r => setTimeout(r, 100)) })
   console.log('COLLAPSED:', (document.body.textContent || '').includes('another line') === false)
+}
+const issuesTab = [...document.querySelectorAll('button')].find(button => button.textContent === translate('issuesTab'))
+console.log('ISSUES TAB:', Boolean(issuesTab))
+if (issuesTab) {
+  await act(async () => { issuesTab.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 250)) })
+  const card = [...document.querySelectorAll('[role="button"]')].find(element => element.textContent.includes('#101'))
+  console.log('ISSUE CARDS:', document.body.textContent.includes('#102'), '| card:', Boolean(card))
+  if (card) await act(async () => { card.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 250)) })
+  console.log('ISSUE DETAIL:', document.body.textContent.includes('小节标题'), '| RELATED:', (document.body.textContent.match(/子议题标题/g) || []).length > 0)
+  console.log('MD RENDER:', Boolean(document.querySelector('strong')), '| COMMENTS:', document.body.textContent.includes('@bob'))
+  if (card) {
+    await act(async () => { card.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+    console.log('ISSUE DESELECT:', document.body.textContent.includes(translate('issueDetailEmpty')))
+  }
+  const changesTab = [...document.querySelectorAll('button')].find(button => button.textContent === translate('changesTab'))
+  if (changesTab) await act(async () => { changesTab.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 100)) })
 }
 console.log('files tab found:', Boolean(tab))
 if (tab) await act(async () => { tab.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
