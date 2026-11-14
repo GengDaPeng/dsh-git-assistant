@@ -46,7 +46,7 @@ globalThis.fetch = async url => {
         { path: 'src/b.ts', status: 'M', additions: 1, deletions: 0, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'another line', oldNumber: 1, newNumber: 1 }] }] },
       ] }
     : href.includes('/commit-diff') ? { file: 'a.ts', hash: 'abc1234def', files: [{ path: 'a.ts', binary: false, newFile: false, deletedFile: false, additions: 1, deletions: 0, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'added line', oldNumber: 1, newNumber: 1 }] }] }] }
-    : href.includes('/commit') ? { commit: { hash: 'abc1234def', author: 'A', email: 'a@x', time: 1700000000, subject: 'merge commit', body: 'detail body' }, files: [{ path: 'a.ts', status: 'M', additions: 3, deletions: 1 }], stats: { files: 1, additions: 3, deletions: 1 } }
+    : href.includes('/commit') ? { commit: { hash: 'abc1234def', author: 'A', email: 'a@x', time: 1700000000, subject: 'merge commit', body: 'detail body' }, files: [{ path: 'a.ts', status: 'M', additions: 3, deletions: 1 }, { path: 'src/b.ts', status: 'M', additions: 1, deletions: 0 }], stats: { files: 2, additions: 4, deletions: 1 } }
     : href.includes('/graph') ? { commits: [
         { oid: 'abc1234def', parents: ['fff999', 'eee888'], author: 'A', time: 1700000000, subject: 'merge commit', refs: ['master'] },
         { oid: 'fff999aaa', parents: ['ddd777'], author: 'B', time: 1699990000, subject: 'older commit', refs: [] },
