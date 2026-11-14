@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process'
 import { lstatSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { basename, dirname, extname, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 
 export const name = 'dsh-git-assistant'
 export const inject = ['webServer', 'workspaceRegistry', 'sessionController', 'sessionPersistence']
@@ -474,6 +474,384 @@ async function commitOf(repoPath, hash) {
   }
 }
 
+const ISSUE_CACHE_TTL = 5 * 60 * 1000
+const ISSUE_STORE_TTL = 5 * 60 * 1000
+const ISSUE_STALE_AFTER = 5 * 60 * 1000
+const ISSUE_POLL_MS = 2 * 60 * 1000
+const ISSUE_ACCESS_TTL = 15 * 60 * 1000
+const ISSUE_FULL_SYNC_MS = 30 * 60 * 1000
+const issueCache = new Map()
+const issueStores = new Map()
+
+function issueCacheGet(key) {
+  const hit = issueCache.get(key)
+  if (!hit) return undefined
+  if (Date.now() - hit.at > ISSUE_CACHE_TTL) { issueCache.delete(key); return undefined }
+  return hit.value
+}
+
+function issueCacheSet(key, value) {
+  if (issueCache.size >= 300) {
+    const oldest = issueCache.keys().next().value
+    if (oldest !== undefined) issueCache.delete(oldest)
+  }
+  issueCache.set(key, { at: Date.now(), value })
+}
+
+function invalidateIssueEntry(repoPath, number) {
+  issueCache.delete(`issue|${repoPath}|${number}`)
+  issueCache.delete(`comments|${repoPath}|${number}`)
+}
+
+function issueFromRest(item) {
+  return {
+    number: item.number,
+    title: item.title ?? '',
+    state: String(item.state ?? '').toLowerCase(),
+    labels: (item.labels ?? []).map(label => ({ name: typeof label === 'string' ? label : label.name, color: typeof label === 'string' ? '' : label.color })),
+    assignees: (item.assignees ?? []).map(assignee => typeof assignee === 'string' ? assignee : assignee.login),
+    comments: item.comments ?? 0,
+    updatedAt: item.updated_at ?? item.updatedAt ?? '',
+    createdAt: item.created_at ?? item.createdAt ?? '',
+    url: item.html_url ?? item.url ?? '',
+    parent: null,
+    children: [],
+  }
+}
+
+function issueStoreOf(repoPath) {
+  let store = issueStores.get(repoPath)
+  if (!store) {
+    store = { repo: null, issues: new Map(), lastSyncAt: 0, fullSyncAt: 0, checkedAt: 0, syncing: null, refSignature: '', watching: false, etag: '', lastAccessAt: 0 }
+    issueStores.set(repoPath, store)
+  }
+  return store
+}
+
+async function issueRelationsFor(owner, name, numbers) {
+  const relations = new Map()
+  for (let offset = 0; offset < numbers.length; offset += 40) {
+    const chunk = numbers.slice(offset, offset + 40)
+    const part = await issueRelationsOf(owner, name, chunk)
+    for (const [number, value] of part) relations.set(number, value)
+  }
+  return relations
+}
+
+async function syncIssueStore(repoPath, { forceFull = false } = {}) {
+  const store = issueStoreOf(repoPath)
+  if (store.syncing) return store.syncing
+  store.syncing = (async () => {
+    try {
+      const repo = await githubRepoOf(repoPath)
+      store.repo = repo
+      const now = Date.now()
+      const full = forceFull || !store.fullSyncAt || now - store.fullSyncAt > ISSUE_FULL_SYNC_MS
+      const items = []
+      if (full) {
+        for (let page = 1; page <= 3; page += 1) {
+          const raw = await ghJson(['api', `repos/${repo.owner}/${repo.name}/issues?state=all&per_page=100&page=${page}`], 'gh issue sync failed')
+          const list = Array.isArray(raw) ? raw : []
+          items.push(...list.filter(item => !item.pull_request))
+          if (list.length < 100) break
+        }
+      } else {
+        const since = new Date(store.lastSyncAt - 60000).toISOString()
+        const raw = await ghJson(['api', `repos/${repo.owner}/${repo.name}/issues?state=all&since=${encodeURIComponent(since)}&per_page=100&sort=updated&direction=desc`], 'gh issue sync failed')
+        items.push(...(Array.isArray(raw) ? raw : []).filter(item => !item.pull_request))
+      }
+      const changed = []
+      for (const item of items) {
+        const issue = issueFromRest(item)
+        const previous = store.issues.get(issue.number)
+        if (!previous || previous.updatedAt !== issue.updatedAt) changed.push(issue.number)
+        store.issues.set(issue.number, issue)
+      }
+      if (changed.length > 0) {
+        const relationNumbers = full && changed.length > 40
+          ? changed
+              .map(number => store.issues.get(number))
+              .filter(Boolean)
+              .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+              .slice(0, 40)
+              .map(issue => issue.number)
+          : changed
+        const relations = await issueRelationsFor(repo.owner, repo.name, relationNumbers)
+        for (const number of changed) {
+          const issue = store.issues.get(number)
+          if (!issue) continue
+          const relation = relations.get(number)
+          issue.parent = relation?.parent ?? null
+          issue.children = relation?.children ?? []
+          if (relation?.comments !== undefined) issue.comments = relation.comments
+          invalidateIssueEntry(repoPath, number)
+        }
+      }
+      store.lastSyncAt = now
+      if (full) store.fullSyncAt = now
+      store.checkedAt = now
+    } finally {
+      store.syncing = null
+    }
+  })()
+  return store.syncing
+}
+
+function parseGhIncludedResponse(result) {
+  const text = String(result?.stdout ?? '')
+  const split = text.indexOf('\r\n\r\n') >= 0 ? text.indexOf('\r\n\r\n') : text.indexOf('\n\n')
+  const head = split >= 0 ? text.slice(0, split) : text
+  const body = split >= 0 ? text.slice(split + (text.includes('\r\n\r\n') ? 4 : 2)) : ''
+  const status = Number((/HTTP\/\S+\s+(\d{3})/.exec(head) ?? [])[1] ?? 0)
+  const etag = (/^etag:\s*(.+)$/im.exec(head) ?? [])[1]?.trim() ?? ''
+  return { status, etag, body }
+}
+
+async function pollIssueStore(repoPath) {
+  const store = issueStoreOf(repoPath)
+  if (store.syncing || !store.fullSyncAt) return
+  store.syncing = (async () => {
+    try {
+      const repo = store.repo ?? await githubRepoOf(repoPath)
+      store.repo = repo
+      const since = new Date(store.lastSyncAt - 60000).toISOString()
+      const args = ['api', '-i']
+      if (store.etag) args.push('-H', `If-None-Match: ${store.etag}`)
+      args.push(`repos/${repo.owner}/${repo.name}/issues?state=all&since=${encodeURIComponent(since)}&per_page=100&sort=updated&direction=desc`)
+      const result = await runProcess('gh', args)
+      const parsed = parseGhIncludedResponse(result)
+      if (parsed.status === 304) { store.checkedAt = Date.now(); return }
+      if (parsed.status < 200 || parsed.status >= 300) {
+        const message = String(result?.stderr || '').trim().split('\n')[0] || `HTTP ${parsed.status}`
+        throw new Error(message)
+      }
+      let items = []
+      try { items = JSON.parse(parsed.body) } catch { items = [] }
+      if (!Array.isArray(items)) items = []
+      items = items.filter(item => !item.pull_request)
+      const now = Date.now()
+      const changed = []
+      for (const item of items) {
+        const issue = issueFromRest(item)
+        const previous = store.issues.get(issue.number)
+        if (!previous || previous.updatedAt !== issue.updatedAt) changed.push(issue.number)
+        store.issues.set(issue.number, issue)
+      }
+      if (changed.length > 0) {
+        const relations = await issueRelationsFor(repo.owner, repo.name, changed)
+        for (const number of changed) {
+          const issue = store.issues.get(number)
+          if (!issue) continue
+          const relation = relations.get(number)
+          issue.parent = relation?.parent ?? null
+          issue.children = relation?.children ?? []
+          if (relation?.comments !== undefined) issue.comments = relation.comments
+          invalidateIssueEntry(repoPath, number)
+        }
+      }
+      if (parsed.etag) store.etag = parsed.etag
+      store.lastSyncAt = now
+      store.checkedAt = now
+    } finally {
+      store.syncing = null
+    }
+  })()
+  return store.syncing
+}
+
+let issuePoller = null
+
+function ensureIssuePolling() {
+  if (issuePoller) return
+  issuePoller = setInterval(() => {
+    const now = Date.now()
+    for (const [repoPath, store] of issueStores) {
+      if (!store.lastAccessAt || now - store.lastAccessAt > ISSUE_ACCESS_TTL) continue
+      if (!store.fullSyncAt) continue
+      pollIssueStore(repoPath).catch(() => {})
+    }
+  }, ISSUE_POLL_MS)
+  issuePoller.unref?.()
+}
+
+function issueStoreResult(store, state, limit) {
+  const issues = [...store.issues.values()]
+    .filter(issue => state === 'all' || issue.state === state)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .slice(0, limit)
+  return {
+    repo: store.repo,
+    issues,
+    stale: Date.now() - store.checkedAt > ISSUE_STORE_TTL,
+  }
+}
+
+function gitDirOf(repoPath) {
+  const dotGit = join(repoPath, '.git')
+  try {
+    const stat = statSync(dotGit)
+    if (stat.isFile()) {
+      const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, 'utf8'))
+      if (match) return resolve(repoPath, match[1].trim())
+    }
+  } catch { /* ignore */ }
+  return dotGit
+}
+
+function gitRefSignature(repoPath) {
+  const gitDir = gitDirOf(repoPath)
+  let signature = ''
+  const addPath = (target, depth) => {
+    let stat
+    try { stat = statSync(target) } catch { return }
+    if (stat.isDirectory()) {
+      if (depth > 4) return
+      let entries = []
+      try { entries = readdirSync(target, { withFileTypes: true }) } catch { return }
+      for (const entry of entries) addPath(join(target, entry.name), depth + 1)
+      return
+    }
+    signature += `${target}:${stat.mtimeMs}:${stat.size};`
+  }
+  addPath(join(gitDir, 'refs', 'remotes'), 0)
+  addPath(join(gitDir, 'packed-refs'), 0)
+  addPath(join(gitDir, 'FETCH_HEAD'), 0)
+  addPath(join(gitDir, 'logs', 'refs', 'remotes'), 0)
+  return signature
+}
+
+let issueWatcher = null
+
+function ensureIssueWatcher() {
+  if (issueWatcher) return
+  issueWatcher = setInterval(() => {
+    for (const [repoPath, store] of issueStores) {
+      const signature = gitRefSignature(repoPath)
+      if (store.refSignature && signature !== store.refSignature) {
+        store.checkedAt = 0
+        syncIssueStore(repoPath).catch(() => {})
+      }
+      store.refSignature = signature
+    }
+  }, 8000)
+  issueWatcher.unref?.()
+}
+
+function runProcess(command, args, { timeout = 20000, maxBuffer = 8 * 1024 * 1024 } = {}) {
+  return new Promise(resolve => {
+    let stdout = ''
+    let stderr = ''
+    let child
+    try { child = spawn(command, args, { cwd: undefined, env: process.env }) } catch (error) { resolve({ code: 1, stdout, stderr: String(error?.message ?? error) }); return }
+    const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* ignore */ } }, timeout)
+    child.stdout?.on('data', chunk => { if (stdout.length < maxBuffer) stdout += chunk })
+    child.stderr?.on('data', chunk => { if (stderr.length < maxBuffer) stderr += chunk })
+    child.on('error', error => { clearTimeout(timer); resolve({ code: 1, stdout, stderr: String(error?.message ?? error) }) })
+    child.on('close', code => { clearTimeout(timer); resolve({ code: code ?? 1, stdout, stderr }) })
+  })
+}
+
+async function githubRepoOf(repoPath) {
+  const raw = await gitOk(repoPath, ['remote', 'get-url', 'origin'])
+  if (!raw) throw new Error('repository has no origin remote')
+  const match = raw.trim().match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?$/)
+  if (!match) throw new Error('origin is not a GitHub repository')
+  return { owner: match[1], name: match[2] }
+}
+
+async function ghJson(args, errorPrefix) {
+  const result = await runProcess('gh', args)
+  if (result.code !== 0) {
+    const message = (result.stderr || result.stdout || '').trim().split('\n')[0] || 'gh command failed'
+    throw new Error(`${errorPrefix}: ${message}`)
+  }
+  try { return JSON.parse(result.stdout) } catch { throw new Error(`${errorPrefix}: invalid response`) }
+}
+
+async function issueRelationsOf(owner, name, numbers) {
+  const relations = new Map()
+  if (numbers.length === 0) return relations
+  const aliases = numbers.map((number, index) => `i${index}: issue(number: ${number}) { number state comments { totalCount } parent { number title state } subIssues(first: 30) { nodes { number title state } } }`).join('\n')
+  const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${aliases} } }`
+  const result = await runProcess('gh', ['api', 'graphql', '-f', `query=${query}`])
+  if (result.code !== 0) return relations
+  try {
+    const data = JSON.parse(result.stdout)?.data?.repository ?? {}
+    for (const value of Object.values(data)) {
+      if (!value || typeof value.number !== 'number') continue
+      relations.set(value.number, {
+        comments: value.comments?.totalCount ?? 0,
+        parent: value.parent ? { number: value.parent.number, title: value.parent.title, state: value.parent.state } : null,
+        children: Array.isArray(value.subIssues?.nodes) ? value.subIssues.nodes.filter(Boolean).map(child => ({ number: child.number, title: child.title, state: child.state })) : [],
+      })
+    }
+  } catch { /* ignore */ }
+  return relations
+}
+
+async function issuesOf(repoPath, state, search, limit) {
+  const repo = await githubRepoOf(repoPath)
+  const args = ['issue', 'list', '--repo', `${repo.owner}/${repo.name}`, '--state', state, '--limit', String(limit), '--json', 'number,title,state,labels,assignees,comments,updatedAt,url']
+  if (search) args.push('--search', search)
+  const issues = await ghJson(args, 'gh issue list failed')
+  const relations = await issueRelationsOf(repo.owner, repo.name, issues.map(issue => issue.number))
+  return {
+    repo,
+    issues: issues.map(issue => ({
+      number: issue.number,
+      title: issue.title ?? '',
+      state: String(issue.state ?? '').toLowerCase(),
+      labels: (issue.labels ?? []).map(label => ({ name: label.name, color: label.color })),
+      assignees: (issue.assignees ?? []).map(assignee => assignee.login),
+      comments: issue.comments ?? 0,
+      updatedAt: issue.updatedAt ?? '',
+      url: issue.url ?? '',
+      parent: relations.get(issue.number)?.parent ?? null,
+      children: relations.get(issue.number)?.children ?? [],
+    })),
+  }
+}
+
+async function issueCommentsOf(repoPath, number) {
+  const repo = await githubRepoOf(repoPath)
+  const comments = await ghJson(['api', `repos/${repo.owner}/${repo.name}/issues/${number}/comments?per_page=50`], 'gh issue comments failed')
+  return {
+    comments: (Array.isArray(comments) ? comments : []).map(comment => ({
+      id: comment.id,
+      author: comment.user?.login ?? '',
+      body: comment.body ?? '',
+      createdAt: comment.created_at ?? '',
+      url: comment.html_url ?? '',
+    })),
+  }
+}
+
+async function issueDetailOf(repoPath, number) {
+  const repo = await githubRepoOf(repoPath)
+  const issue = await ghJson(['issue', 'view', String(number), '--repo', `${repo.owner}/${repo.name}`, '--json', 'number,title,state,body,labels,assignees,createdAt,updatedAt,url,author,milestone'], 'gh issue view failed')
+  const relations = await issueRelationsOf(repo.owner, repo.name, [number])
+  const relation = relations.get(number)
+  return {
+    repo,
+    issue: {
+      number: issue.number,
+      title: issue.title ?? '',
+      state: String(issue.state ?? '').toLowerCase(),
+      body: issue.body ?? '',
+      labels: (issue.labels ?? []).map(label => ({ name: label.name, color: label.color })),
+      assignees: (issue.assignees ?? []).map(assignee => assignee.login),
+      author: issue.author?.login ?? '',
+      comments: relation?.comments ?? 0,
+      createdAt: issue.createdAt ?? '',
+      updatedAt: issue.updatedAt ?? '',
+      url: issue.url ?? '',
+      milestone: issue.milestone?.title ?? null,
+      parent: relation?.parent ?? null,
+      children: relation?.children ?? [],
+    },
+  }
+}
+
 async function linesOf(repoPath, file, start, end, staged, hash) {
   let content
   if (hash) {
@@ -841,7 +1219,36 @@ async function chatNew(ctx, cwd) {
 
 /* ── plugin entry ────────────────────────────────────────────────────── */
 
+let toolSyncTimer = null
+
+function markIssueStoresForSync() {
+  if (issueStores.size === 0) return
+  for (const store of issueStores.values()) store.checkedAt = 0
+  if (toolSyncTimer) return
+  toolSyncTimer = setTimeout(() => {
+    toolSyncTimer = null
+    for (const repoPath of issueStores.keys()) syncIssueStore(repoPath).catch(() => {})
+  }, 5000)
+  toolSyncTimer.unref?.()
+}
+
+function watchToolEvents(ctx) {
+  if (typeof ctx.on !== 'function') return
+  const handler = event => {
+    try {
+      const data = event?.data ?? event
+      const args = data?.arguments ?? data?.args ?? data?.input ?? ''
+      const raw = typeof args === 'string' ? args : JSON.stringify(args)
+      if (!/git\s+push|gh\s+(issue|pr)\b/.test(raw)) return
+      markIssueStoresForSync()
+    } catch { /* ignore malformed tool events */ }
+  }
+  ctx.on('tool/call', handler)
+  ctx.on('tool/result', handler)
+}
+
 export function apply(ctx) {
+  watchToolEvents(ctx)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: PREFIX,
@@ -862,6 +1269,87 @@ export function apply(ctx) {
           return
         }
 
+        if (req.method === 'GET' && route === '/issues/touch') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const store = issueStoreOf(target.path)
+          store.lastAccessAt = Date.now()
+          ensureIssueWatcher()
+          ensureIssuePolling()
+          json(res, 200, { ok: true })
+          return
+        }
+        if (req.method === 'GET' && route === '/issues') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const state = ['open', 'closed', 'all'].includes(url.searchParams.get('state')) ? url.searchParams.get('state') : 'open'
+          const search = (url.searchParams.get('search') ?? '').trim()
+          const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 50))
+          const force = url.searchParams.get('refresh') === '1'
+          const full = url.searchParams.get('full') === '1'
+          try {
+            if (search) {
+              const cacheKey = `issues|${target.path}|${state}|${search}|${limit}`
+              const cached = force ? undefined : issueCacheGet(cacheKey)
+              if (cached !== undefined) { json(res, 200, cached); return }
+              const result = await issuesOf(target.path, state, search, limit)
+              issueCacheSet(cacheKey, result)
+              json(res, 200, result)
+              return
+            }
+            ensureIssueWatcher()
+            ensureIssuePolling()
+            const store = issueStoreOf(target.path)
+            store.lastAccessAt = Date.now()
+            if (!force && store.issues.size > 0) {
+              const payload = issueStoreResult(store, state, limit)
+              const stale = !store.checkedAt || Date.now() - store.checkedAt > ISSUE_STALE_AFTER
+              if (stale) {
+                payload.stale = true
+                syncIssueStore(target.path).catch(() => {})
+              }
+              json(res, 200, payload)
+              return
+            }
+            await syncIssueStore(target.path, { forceFull: full || store.issues.size === 0 })
+            json(res, 200, issueStoreResult(store, state, limit))
+          } catch (error) { json(res, 400, { error: String(error?.message ?? error) }) }
+          return
+        }
+        if (req.method === 'GET' && route === '/issue') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const number = Number(url.searchParams.get('number'))
+          if (!Number.isInteger(number) || number <= 0) { json(res, 400, { error: 'invalid issue number' }); return }
+          const cacheKey = `issue|${target.path}|${number}`
+          const force = url.searchParams.get('refresh') === '1'
+          const cached = force ? undefined : issueCacheGet(cacheKey)
+          if (cached !== undefined) { json(res, 200, cached); return }
+          try {
+            const result = await issueDetailOf(target.path, number)
+            issueCacheSet(cacheKey, result)
+            json(res, 200, result)
+          }
+          catch (error) { json(res, 400, { error: String(error?.message ?? error) }) }
+          return
+        }
+        if (req.method === 'GET' && route === '/issue-comments') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const number = Number(url.searchParams.get('number'))
+          if (!Number.isInteger(number) || number <= 0) { json(res, 400, { error: 'invalid issue number' }); return }
+          const cacheKey = `comments|${target.path}|${number}`
+          const force = url.searchParams.get('refresh') === '1'
+          const cached = force ? undefined : issueCacheGet(cacheKey)
+          if (cached !== undefined) { json(res, 200, cached); return }
+          try {
+            const result = await issueCommentsOf(target.path, number)
+            issueCacheSet(cacheKey, result)
+            json(res, 200, result)
+          }
+          catch (error) { json(res, 400, { error: String(error?.message ?? error) }) }
+          return
+        }
         if (req.method === 'GET' && route === '/lines') {
           const target = await knownCheckout(ctx, url.searchParams.get('path'))
           if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
