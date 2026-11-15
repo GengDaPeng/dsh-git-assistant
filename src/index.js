@@ -11,7 +11,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { lstatSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 
@@ -737,6 +737,60 @@ function ensureIssueWatcher() {
   issueWatcher.unref?.()
 }
 
+function streamRepoEvents(target, req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+  res.write('retry: 3000\n\n')
+  const gitDir = gitDirOf(target.path)
+  const watched = []
+  let debounceTimer = null
+  let closed = false
+  let heartbeat = null
+  const cleanup = () => {
+    if (closed) return
+    closed = true
+    if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null }
+    if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
+    for (const watcher of watched) { try { watcher.close() } catch { /* ignore */ } }
+    watched.length = 0
+  }
+  const send = () => {
+    if (closed || debounceTimer) return
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null
+      if (closed) return
+      try {
+        res.write(`event: change\ndata: ${JSON.stringify({ path: target.path })}\n\n`)
+      } catch { cleanup() }
+    }, 180)
+  }
+  const targets = [
+    join(gitDir, 'index'), join(gitDir, 'HEAD'), join(gitDir, 'packed-refs'),
+    join(gitDir, 'FETCH_HEAD'), join(gitDir, 'ORIG_HEAD'), join(gitDir, 'MERGE_HEAD'),
+    join(gitDir, 'refs'), join(gitDir, 'logs', 'refs'),
+  ]
+  for (const targetPath of targets) {
+    try {
+      if (!existsSync(targetPath)) continue
+      const isDirectory = statSync(targetPath).isDirectory()
+      const watcher = watch(targetPath, { recursive: isDirectory }, send)
+      watcher.on?.('error', () => { /* ignore watcher errors, polling remains a fallback */ })
+      watched.push(watcher)
+    } catch { /* unsupported target in this environment */ }
+  }
+  heartbeat = setInterval(() => {
+    if (closed) return
+    try { res.write(': ping\n\n') } catch { cleanup() }
+  }, 20000)
+  heartbeat.unref?.()
+  req.on('close', cleanup)
+  res.on('close', cleanup)
+}
+
 function runProcess(command, args, { timeout = 20000, maxBuffer = 8 * 1024 * 1024 } = {}) {
   return new Promise(resolve => {
     let stdout = ''
@@ -1260,6 +1314,12 @@ export function apply(ctx) {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const route = url.pathname.slice(PREFIX.length).replace(/\/+$/, '') || '/'
       try {
+        if (req.method === 'GET' && route === '/events') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          streamRepoEvents(target, req, res)
+          return
+        }
         if (req.method === 'GET' && route === '/ping') {
           json(res, 200, { ok: true, version: '0.2.0' })
           return
@@ -1537,4 +1597,10 @@ export function apply(ctx) {
 }
 
 /** Exposed for local parser checks only; not part of the plugin surface. */
-export const internals = { parseWorktrees, parseStatus, parseUnifiedDiff, filesOf: (repoPath) => filesOf(repoPath), stageFiles, unstageFiles, discardFiles, commitFiles, switchBranch, createBranch }
+export const internals = {
+  parseWorktrees, parseStatus, parseUnifiedDiff, safeRelativePath, safeFileList,
+  filesOf: (repoPath) => filesOf(repoPath),
+  diffOf: (repoPath, file, staged) => diffOf(repoPath, file, staged),
+  clearDiffCache, diffCacheSize: () => diffCache.size,
+  stageFiles, unstageFiles, discardFiles, commitFiles, switchBranch, createBranch,
+}
