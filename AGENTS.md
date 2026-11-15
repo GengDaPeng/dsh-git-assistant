@@ -29,4 +29,4 @@
 - 优先本地 git 读取；只有用户主动推送/拉取时才联网。
 - 写操作（提交、放弃、同步等）先在测试仓库验证。
 - 插件重载：`plugin_manager set_bundle` 先关再开；客户端改动需要刷新页面。
-- 提交前跑 `node --check src/client.js src/index.js` 和 `npm run smoke`。
+- 提交前跑 `node --check src/client.js src/index.js`、`npm run smoke`、`npm run test:host` 和 jsdom 回归脚本。
