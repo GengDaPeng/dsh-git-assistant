@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     }
 
     function loadStatusEntry(entry) {
-      if (entry.inFlight) { entry.queued = true; return }
+      if (entry.inFlight) { entry.queued = true; return entry.inFlight }
       entry.lastFetch = Date.now()
       entry.inFlight = api('/status', { path: entry.path })
         .then(data => {
@@ -75,6 +75,7 @@ window.__ModuleLoader__.load({
           notifyStatus(entry)
           if (entry.queued) { entry.queued = false; loadStatusEntry(entry) }
         })
+      return entry.inFlight
     }
 
     function ensureStatusLoop() {
@@ -108,7 +109,28 @@ window.__ModuleLoader__.load({
 
     function refreshStatusPath(path) {
       const entry = path ? statusBus.get(path) : undefined
-      if (entry) loadStatusEntry(entry)
+      return entry ? loadStatusEntry(entry) : Promise.resolve()
+    }
+
+    /** Subscribe to host-side Git change events for one checkout; the browser reconnects automatically. */
+    function useRepoEvents(path, onChange) {
+      const handlerRef = useRef(onChange)
+      handlerRef.current = onChange
+      useEffect(() => {
+        if (!path || typeof EventSource === 'undefined') return undefined
+        const source = new EventSource(`${window.location.origin}/git-assistant/api/events?path=${encodeURIComponent(path)}`)
+        let timer = null
+        const listener = () => {
+          if (timer) return
+          timer = setTimeout(() => { timer = null; handlerRef.current?.() }, 250)
+        }
+        source.addEventListener('change', listener)
+        return () => {
+          if (timer) clearTimeout(timer)
+          source.removeEventListener('change', listener)
+          source.close()
+        }
+      }, [path])
     }
     const MAX_DIFF_LINES = 6000
     const MAX_PREVIEW_LINES = 5000
@@ -759,6 +781,7 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(defaultOpen)
       const [status, refreshStatus] = useStatusAt(item.path, open && visible)
       const [busy, setBusy] = useState(false)
+      const [pendingStage, setPendingStage] = useState(() => new Map())
       const [expanded, setExpanded] = useState(true)
       const [expandedDirs, setExpandedDirs] = useState(() => new Set())
       const [collapsedSections, setCollapsedSections] = useState(() => new Set())
@@ -767,12 +790,27 @@ window.__ModuleLoader__.load({
       const data = status.data
       const behind = status.data?.behind ?? item.behind ?? 0
       const needsSync = behind > 0
-      const stagedFiles = data?.staged ?? []
-      const changeFiles = [...(data?.unstaged ?? []), ...(data?.untracked ?? [])]
-      const stagedTree = useMemo(() => fileRows(stagedFiles.map(file => ({ ...file, __staged: true }))), [data])
-      const changeTree = useMemo(() => fileRows(changeFiles), [data])
-      const stagedStatus = useMemo(() => new Map(stagedFiles.map(file => [file.path, file.status])), [data])
-      const changeStatus = useMemo(() => new Map(changeFiles.map(file => [file.path, file.status])), [data])
+      let stagedFiles = data?.staged ?? []
+      let changeFiles = [...(data?.unstaged ?? []), ...(data?.untracked ?? [])]
+      if (pendingStage.size > 0) {
+        const stagedMap = new Map(stagedFiles.map(file => [file.path, file]))
+        const changeMap = new Map(changeFiles.map(file => [file.path, file]))
+        for (const [path, operation] of pendingStage) {
+          if (operation === 'stage') {
+            const file = changeMap.get(path)
+            if (file) { changeMap.delete(path); stagedMap.set(path, file) }
+          } else {
+            const file = stagedMap.get(path)
+            if (file) { stagedMap.delete(path); changeMap.set(path, file) }
+          }
+        }
+        stagedFiles = [...stagedMap.values()]
+        changeFiles = [...changeMap.values()]
+      }
+      const stagedTree = useMemo(() => fileRows(stagedFiles.map(file => ({ ...file, __staged: true }))), [data, pendingStage])
+      const changeTree = useMemo(() => fileRows(changeFiles), [data, pendingStage])
+      const stagedStatus = useMemo(() => new Map(stagedFiles.map(file => [file.path, file.status])), [data, pendingStage])
+      const changeStatus = useMemo(() => new Map(changeFiles.map(file => [file.path, file.status])), [data, pendingStage])
       const toggleSection = name => setCollapsedSections(previous => {
         const next = new Set(previous)
         if (next.has(name)) next.delete(name)
@@ -789,6 +827,29 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try { await work() } catch (error) { onNotify?.(String(error?.message ?? error), 'error') }
         finally { setBusy(false); refreshStatus() }
+      }
+      const optimisticStage = (files, staged) => {
+        const paths = files.map(file => file.path).filter(Boolean)
+        if (paths.length === 0) return
+        const operation = staged ? 'unstage' : 'stage'
+        setPendingStage(previous => {
+          const next = new Map(previous)
+          for (const path of paths) next.set(path, operation)
+          return next
+        })
+        setBusy(true)
+        apiPost(staged ? '/unstage' : '/stage', { path: item.path, files: paths })
+          .then(() => refreshStatus())
+          .then(() => new Promise(resolve => setTimeout(resolve, 120)))
+          .catch(error => onNotify?.(String(error?.message ?? error), 'error'))
+          .finally(() => {
+            setBusy(false)
+            setPendingStage(previous => {
+              const next = new Map(previous)
+              for (const path of paths) next.delete(path)
+              return next
+            })
+          })
       }
       const sync = () => runAction(async () => {
         await apiPost('/sync', { path: item.path })
@@ -865,7 +926,7 @@ window.__ModuleLoader__.load({
               h('span', null, t('staged'))),
             h('span', { style: { flex: 1 } }),
             h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center' } },
-              h(IconAction, { label: t('unstageAll'), disabled: busy, onClick: () => runAction(() => apiPost('/unstage', { path: item.path, files: stagedFiles.map(file => file.path) })) }, h(IconMinus))),
+              h(IconAction, { label: t('unstageAll'), disabled: busy, onClick: () => optimisticStage(stagedFiles, true) }, h(IconMinus))),
             h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(stagedFiles.length))) : null,
           stagedFiles.length > 0 && !collapsedSections.has('staged')
             ? h(TreeRows, {
@@ -874,7 +935,7 @@ window.__ModuleLoader__.load({
                 selectedKey: selectedPath ? `s:${selectedPath}` : undefined,
                 actionsFor: file => h(IconAction, {
                   label: t('unstage'), disabled: busy,
-                  onClick: event => { event.stopPropagation(); runAction(() => apiPost('/unstage', { path: item.path, files: [file.path] })) },
+                  onClick: event => { event.stopPropagation(); optimisticStage([file], true) },
                 }, h(IconMinus)),
                 statusByPath: stagedStatus, showStatus: true,
                 hoveredKey, onHoverKey: setHoveredKey,
@@ -898,7 +959,7 @@ window.__ModuleLoader__.load({
                 label: t('discardAll'), danger: true, disabled: busy || changeFiles.length === 0,
                 onClick: () => onDiscardAll?.(changeFiles.map(file => file.path)),
               }, h(IconUndo)),
-              h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => runAction(() => apiPost('/stage', { path: item.path, files: changeFiles.map(file => file.path) })) }, h(IconPlus))),
+              h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => optimisticStage(changeFiles, false) }, h(IconPlus))),
             h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(changeFiles.length))) : null,
           changeFiles.length > 0 && !collapsedSections.has('changes')
             ? h(TreeRows, {
@@ -912,7 +973,7 @@ window.__ModuleLoader__.load({
                   }, h(IconUndo)),
                   h(IconAction, {
                     label: t('stage'), disabled: busy,
-                    onClick: event => { event.stopPropagation(); runAction(() => apiPost('/stage', { path: item.path, files: [file.path] })) },
+                    onClick: event => { event.stopPropagation(); optimisticStage([file], false) },
                   }, h(IconPlus))),
                 statusByPath: changeStatus, showStatus: true,
                 hoveredKey, onHoverKey: setHoveredKey,
@@ -2868,6 +2929,10 @@ window.__ModuleLoader__.load({
         return items[0].id
       }, [repositories.items, storedId, sessionCwd])
       const active = useMemo(() => repositories.items.find(item => item.id === preferredId), [repositories.items, preferredId])
+      useRepoEvents(active?.path, useCallback(() => {
+        if (active?.path) refreshStatusPath(active.path)
+        bump()
+      }, [active?.path, bump]))
       const groups = useMemo(() => {
         const grouped = new Map()
         for (const repository of repositories.items) {
