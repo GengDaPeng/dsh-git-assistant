@@ -3255,6 +3255,17 @@ window.__ModuleLoader__.load({
       const [collapsedSections, setCollapsedSections] = useState(() => new Set())
       const [expandedDirs, setExpandedDirs] = useState(() => new Set())
       const [leftWidth, setLeftWidth] = useState(() => { try { const stored = Number(window.localStorage.getItem('dsh-git-assistant:left-width')); return Number.isFinite(stored) && stored >= 240 && stored <= 560 ? stored : 318 } catch { return 318 } })
+      const bodyRef = useRef(null)
+      const [bodyWidth, setBodyWidth] = useState(0)
+      useEffect(() => {
+        const element = bodyRef.current
+        if (!element || typeof ResizeObserver === 'undefined') return undefined
+        const observer = new ResizeObserver(entries => {
+          for (const entry of entries) setBodyWidth(Math.round(entry.contentRect.width))
+        })
+        observer.observe(element)
+        return () => observer.disconnect()
+      }, [])
       const [hoveredKey, setHoveredKey] = useState(undefined)
       const [picked, setPicked] = useState(() => new Set())
       const [graphPath, setGraphPath] = useState(undefined)
@@ -3651,12 +3662,28 @@ window.__ModuleLoader__.load({
         }
       }, [sessionId, active?.path])
       const effectiveLeftWidth = mode === 'issues' ? issuesWidth : leftWidth
+      /**
+       * The right-hand pane must keep enough room for its toolbar (commit picker, wrap, collapse,
+       * view switch) to stay on one line, so the splitter's upper bound follows the measured body
+       * width instead of a fixed 560/760. A narrow host (right sidebar, split conversation view)
+       * therefore simply cannot squeeze the viewer into an unusable sliver.
+       */
+      const RIGHT_PANE_MIN = mode === 'issues' ? 300 : 340
+      const LEFT_PANE_MAX = mode === 'issues' ? 760 : 560
+      const leftPaneMax = bodyWidth > 0
+        ? Math.max(240, Math.min(LEFT_PANE_MAX, bodyWidth - 14 - RIGHT_PANE_MIN))
+        : LEFT_PANE_MAX
+      useEffect(() => {
+        if (bodyWidth <= 0) return
+        if (leftWidth > leftPaneMax) setLeftWidth(leftPaneMax)
+        if (issuesWidth > leftPaneMax) setIssuesWidth(leftPaneMax)
+      }, [bodyWidth, leftPaneMax, leftWidth, issuesWidth])
       const startResize = useCallback(event => {
         event.preventDefault()
         const startX = event.clientX
         const startWidth = mode === 'issues' ? issuesWidth : leftWidth
         const applyWidth = mode === 'issues' ? setIssuesWidth : setLeftWidth
-        const maxWidth = mode === 'issues' ? 760 : 560
+        const maxWidth = leftPaneMax
         const move = moveEvent => applyWidth(Math.min(maxWidth, Math.max(240, startWidth + moveEvent.clientX - startX)))
         const stop = () => {
           document.removeEventListener('pointermove', move)
@@ -3668,7 +3695,7 @@ window.__ModuleLoader__.load({
         document.body.style.userSelect = 'none'
         document.addEventListener('pointermove', move)
         document.addEventListener('pointerup', stop)
-      }, [leftWidth, issuesWidth, mode])
+      }, [leftWidth, issuesWidth, mode, leftPaneMax])
 
       const keyOf = file => file.__staged === undefined ? `f:${file.path}` : `${file.__staged ? 's' : 'w'}:${file.path}`
       const openDiff = (file, event) => {
@@ -3740,9 +3767,9 @@ window.__ModuleLoader__.load({
         // ── title bar ──────────────────────────────────────────
         h('div', {
           style: {
-            display: 'flex', alignItems: 'center', gap: 8, minHeight: 46, padding: '0 12px',
-            margin: '10px 12px 0', borderRadius: T.rMd, background: T.surface,
-            boxShadow: T.edge, flex: '0 0 auto', position: 'relative', zIndex: 2,
+            display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, rowGap: 6, minHeight: 46,
+            padding: '6px 12px', margin: '10px 12px 0', borderRadius: T.rMd, background: T.surface,
+            boxShadow: T.edge, flex: '0 0 auto', position: 'relative', zIndex: 2, minWidth: 0,
           },
         },
           h('span', { style: { display: 'inline-flex', color: T.ink2 } }, h(GitIcon, { size: 15 })),
@@ -3851,7 +3878,7 @@ window.__ModuleLoader__.load({
           ),
 
         // ── body ────────────────────────────────────────────────
-        h('div', { style: { display: 'flex', flex: 1, minHeight: 0, gap: 8, padding: '8px 12px 12px', minWidth: 0, position: 'relative' } },
+        h('div', { ref: bodyRef, style: { display: 'flex', flex: 1, minHeight: 0, gap: 8, padding: '8px 12px 12px', minWidth: 0, position: 'relative' } },
           // left column
           h('div', {
             style: {
@@ -3918,19 +3945,20 @@ window.__ModuleLoader__.load({
           },
             h('div', {
               style: {
-                flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 40, padding: '0 8px',
-                minWidth: 0, borderRadius: T.rMd, background: T.surface, boxShadow: T.edge,
-                position: 'relative', zIndex: 30,
+                flex: '0 0 auto', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, rowGap: 6,
+                minHeight: 40, padding: '6px 8px', minWidth: 0, borderRadius: T.rMd, background: T.surface,
+                boxShadow: T.edge, position: 'relative', zIndex: 30,
               },
             },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: '1 1 auto' } },
               h('div', { ref: commitPickerRef, style: { position: 'relative', minWidth: 0, flex: '0 1 auto' } },
                 h('button', {
                   type: 'button', title: t('selectCommit'),
                   onClick: () => { setCommitPickerOpen(open => !open); if (!commitPickerOpen) refreshLocalCommits() },
                   style: {
-                    appearance: 'none', border: `0.5px solid ${T.border}`,
-                    background: commitPickerOpen ? T.hover : 'transparent', color: T.ink2, height: 26,
-                    padding: '0 10px', borderRadius: T.pill, fontSize: 11.5, cursor: 'pointer',
+                    appearance: 'none', border: '1px solid transparent', boxShadow: T.ring,
+                    background: commitPickerOpen ? T.chip : T.surface, color: T.ink2, height: 26,
+                    padding: '0 10px', borderRadius: 7, fontSize: 11.5, cursor: 'pointer', whiteSpace: 'nowrap',
                     display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, maxWidth: 320,
                   },
                 },
@@ -3984,11 +4012,12 @@ window.__ModuleLoader__.load({
                     h('span', { style: { color: T.success } }, `+${commitPatch.data.stats.additions}`),
                     h('span', { style: { color: T.error } }, `−${commitPatch.data.stats.deletions}`))
                 : null,
-              h('span', { style: { flex: 1 } }),
+              ),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flex: '0 0 auto', marginLeft: 'auto' } },
               h('button', {
                 type: 'button', onClick: () => setWrap(value => !value), title: t('wrapLines'),
                 style: {
-                  appearance: 'none', border: '1px solid transparent', cursor: 'pointer', height: 26, padding: '0 10px',
+                  appearance: 'none', border: '1px solid transparent', whiteSpace: 'nowrap', cursor: 'pointer', height: 26, padding: '0 10px',
                   borderRadius: 7, fontSize: 11.5, fontWeight: 500, font: 'inherit',
                   color: wrap ? T.text : T.ink2, background: wrap ? T.chip : T.surface, boxShadow: wrap ? 'none' : T.ring,
                 },
@@ -3997,7 +4026,7 @@ window.__ModuleLoader__.load({
                 type: 'button', onClick: () => setAllFilesCollapsed(value => !value),
                 disabled: selection?.kind !== 'commit-files', title: allFilesCollapsed ? t('expandAllFiles') : t('collapseAllFiles'),
                 style: {
-                  appearance: 'none', border: '1px solid transparent', cursor: selection?.kind === 'commit-files' ? 'pointer' : 'default',
+                  appearance: 'none', border: '1px solid transparent', whiteSpace: 'nowrap', cursor: selection?.kind === 'commit-files' ? 'pointer' : 'default',
                   height: 26, padding: '0 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 500, font: 'inherit',
                   color: T.ink2, background: allFilesCollapsed ? T.chip : T.surface,
                   boxShadow: allFilesCollapsed ? 'none' : T.ring,
@@ -4008,7 +4037,7 @@ window.__ModuleLoader__.load({
                 ['unified', 'split'].map(value => h('button', {
                   key: value, type: 'button', onClick: () => setView(value),
                   style: {
-                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: view === value ? 600 : 500,
+                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: view === value ? 600 : 500, whiteSpace: 'nowrap',
                     height: 22, padding: '0 10px', borderRadius: 6,
                     background: view === value ? T.surface : 'transparent',
                     color: view === value ? T.text : T.ink2,
@@ -4016,7 +4045,7 @@ window.__ModuleLoader__.load({
                     transition: `background .18s ${T.ease}, color .18s ${T.ease}`,
                   },
                 }, t(value)))),
-              ),
+              )),
 
             h('div', {
               style: {
