@@ -316,6 +316,11 @@ window.__ModuleLoader__.load({
       },
     }
 
+    /**
+     * Surface vocabulary for the workbench: one canvas, one elevated card layer, one inset "well"
+     * for anything you type into, plus a single filled primary action. Everything resolves through
+     * DSH theme tokens so light and dark stay honest; the literal fallbacks only cover a missing token.
+     */
     const T = {
       text: 'var(--dsw-alias-label-primary, inherit)',
       ink2: 'var(--dsw-alias-label-secondary, color-mix(in srgb, currentColor 68%, transparent))',
@@ -324,21 +329,33 @@ window.__ModuleLoader__.load({
       inverse: 'var(--dsw-alias-label-primary-inverted, #fff)',
       primary: 'var(--dsw-alias-button-primary-fill, var(--dsw-alias-brand-primary, #4d6bfe))',
       primaryHover: 'var(--dsw-alias-button-primary-hover, var(--dsw-alias-brand-primary, #4d6bfe))',
+      primaryDim: 'var(--dsw-alias-button-primary-dimmed, color-mix(in srgb, currentColor 9%, transparent))',
+      primaryText: 'var(--dsw-alias-label-primary-inverted, #fff)',
       accent: 'var(--dsw-alias-link, var(--dsw-alias-brand-primary, #4d6bfe))',
       border: 'var(--dsw-alias-border-l2, color-mix(in srgb, currentColor 15%, transparent))',
       borderSoft: 'var(--dsw-alias-border-l1, color-mix(in srgb, currentColor 9%, transparent))',
       lineStrong: 'var(--dsw-alias-border-l4, color-mix(in srgb, currentColor 26%, transparent))',
       hover: 'var(--dsw-alias-interactive-bg-hover, color-mix(in srgb, currentColor 7%, transparent))',
       selected: 'var(--dsw-alias-interactive-bg-active, color-mix(in srgb, currentColor 11%, transparent))',
-      card: 'var(--dsw-alias-bg-layer-2, color-mix(in srgb, currentColor 5%, transparent))',
-      glass: 'color-mix(in srgb, var(--dsw-alias-bg-layer-2, #1f1f22) 72%, transparent)',
+      // Surfaces: canvas (page) → surface (card) → surfaceAlt (card header strip) → well (inputs).
+      canvas: 'var(--dsw-alias-bg-module-platform, #f5f6f7)',
+      surface: 'var(--dsw-alias-bg-layer-1, #fff)',
+      surfaceAlt: 'var(--dsw-alias-card-fill, #fafafa)',
+      surfaceHover: 'var(--dsw-alias-card-fill-hover, #f5f5f5)',
+      well: 'var(--dsw-specific-selector, #f5f6f7)',
+      chip: 'var(--dsw-alias-bg-skeleton, rgba(0,0,0,.045))',
+      edge: 'var(--dsw-elevation-soft, 0 0 0 .5px rgba(0,0,0,.16), 0 4px 16px rgba(0,0,0,.03), 0 0 24px rgba(0,0,0,.03))',
+      edgeStrong: 'var(--dsw-elevation-panel, 0 0 0 .5px rgba(0,0,0,.16), 0 3px 8px rgba(0,0,0,.03), 0 0 16px rgba(0,0,0,.02))',
+      ring: 'var(--dsw-elevation-stroke, 0 0 0 .5px rgba(0,0,0,.16))',
+      card: 'var(--dsw-alias-bg-layer-1, #fff)',
+      glass: 'var(--dsw-alias-bg-layer-1, #fff)',
       menu: 'var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-1, Canvas))',
-      layer: 'var(--dsw-alias-bg-layer-1, color-mix(in srgb, currentColor 4%, transparent))',
+      layer: 'var(--dsw-specific-selector, color-mix(in srgb, currentColor 4%, transparent))',
       layer2: 'var(--dsw-alias-bg-layer-2, color-mix(in srgb, currentColor 6%, transparent))',
-      success: 'var(--dsw-alias-state-success-primary, #3fb950)',
-      error: 'var(--dsw-alias-state-error-primary, #f85149)',
-      warn: 'var(--dsw-alias-state-warn-primary, #c69026)',
-      brand: 'var(--dsw-alias-brand-primary, #58a6ff)',
+      success: 'var(--dsw-alias-state-success-primary, #22c55e)',
+      error: 'var(--dsw-alias-state-error-primary, #ec1313)',
+      warn: 'var(--dsw-alias-state-warn-label, #dd8629)',
+      brand: 'var(--dsw-alias-state-business-primary, #4176e6)',
       mono: 'var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
       sans: 'var(--dsw-font-family, inherit)',
       serif: '"Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", "Iowan Old Style", Palatino, Georgia, serif',
@@ -348,9 +365,26 @@ window.__ModuleLoader__.load({
       rSm: 8, rMd: 12, rLg: 16, rXl: 20, pill: 999,
     }
 
-    const ADD_BG = 'color-mix(in srgb, var(--dsw-alias-state-success-primary, #3fb950) 10%, transparent)'
-    const DEL_BG = 'color-mix(in srgb, var(--dsw-alias-state-error-primary, #f85149) 10%, transparent)'
+    /** Wrapping a tinted fill around a semantic colour keeps status chips readable in both themes. */
+    function tint(color, strength = 12) {
+      return `color-mix(in srgb, ${color} ${strength}%, transparent)`
+    }
+
+    const ADD_BG = 'color-mix(in srgb, var(--dsw-alias-state-success-primary, #22c55e) 12%, transparent)'
+    const DEL_BG = 'color-mix(in srgb, var(--dsw-alias-state-error-primary, #ec1313) 12%, transparent)'
     const STATUS_COLOR = { M: T.warn, A: T.success, U: T.success, D: T.error, R: T.brand, C: T.error, '?': T.success }
+    /** A status letter as a tinted chip: readable at 10px without colouring the whole file name. */
+    function StatusChip({ status, size = 16 }) {
+      if (!status) return h('span', { style: { width: size, flex: `0 0 ${size}px` } })
+      const color = STATUS_COLOR[status] ?? T.muted
+      return h('span', {
+        style: {
+          width: size, height: size, flex: `0 0 ${size}px`, display: 'inline-flex', alignItems: 'center',
+          justifyContent: 'center', borderRadius: 5, fontSize: 9.5, fontWeight: 700, letterSpacing: 0,
+          color, background: tint(color, 14),
+        },
+      }, status)
+    }
     const MONO = T.mono
 
     function basename(path) {
@@ -878,6 +912,7 @@ window.__ModuleLoader__.load({
       }
       const stagedTree = useMemo(() => fileRows(stagedFiles.map(file => ({ ...file, __staged: true }))), [data, pendingStage])
       const changeTree = useMemo(() => fileRows(changeFiles), [data, pendingStage])
+      const dirty = stagedFiles.length + changeFiles.length > 0
       const stagedStatus = useMemo(() => new Map(stagedFiles.map(file => [file.path, file.status])), [data, pendingStage])
       const changeStatus = useMemo(() => new Map(changeFiles.map(file => [file.path, file.status])), [data, pendingStage])
       const loadStashes = useCallback(() => {
@@ -994,18 +1029,106 @@ window.__ModuleLoader__.load({
                       entry.time ? h('span', { style: { fontSize: 10, color: T.subtle, flex: '0 0 auto' } }, formatRelativeTime(entry.time)) : null,
                       h(IconAction, { label: t('stashPop'), disabled: busy, onClick: () => stashPopAt(entry.index) }, h(IconUndo)))))
         : null
+      const sectionHeader = (label, count, expanded, onToggle, actions) => h('div', {
+        onClick: onToggle,
+        style: {
+          display: 'flex', alignItems: 'center', gap: 6, minHeight: 26, marginTop: 2, padding: '0 2px',
+          cursor: 'pointer', userSelect: 'none',
+        },
+      },
+        h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.ink2 } },
+          h(Chevron, { open: expanded, size: 8 }),
+          h('span', { style: { fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' } }, label)),
+        h('span', {
+          style: {
+            fontFamily: MONO, fontSize: 9.5, fontWeight: 600, color: T.muted,
+            background: T.chip, borderRadius: T.pill, padding: '0 6px', lineHeight: '15px',
+          },
+        }, String(count)),
+        h('span', { style: { flex: 1 } }),
+        h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center', gap: 1 } }, actions))
+      const composer = dirty || needsSync ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+        h('textarea', {
+          ref: messageRef, rows: 2, placeholder: `${t('commitPlaceholder')} · ${branchLabel}`,
+          onFocus: event => { event.currentTarget.style.borderColor = T.accent; event.currentTarget.style.boxShadow = `0 0 0 3px ${tint(T.accent, 18)}` },
+          onBlur: event => { event.currentTarget.style.borderColor = T.borderSoft; event.currentTarget.style.boxShadow = 'none' },
+          onKeyDown: event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); commit() } },
+          style: {
+            width: '100%', boxSizing: 'border-box', resize: 'vertical', background: T.well, color: 'inherit',
+            border: `1px solid ${T.borderSoft}`, borderRadius: 9, padding: '7px 9px', fontSize: 12.5,
+            fontFamily: 'inherit', outline: 'none', lineHeight: '18px', minHeight: 54,
+            transition: `border-color .15s ${T.ease}, box-shadow .15s ${T.ease}`,
+          },
+        }),
+        h('button', {
+          type: 'button', onClick: needsSync ? sync : commit, disabled: busy || (!needsSync && !dirty),
+          onMouseEnter: event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = needsSync ? T.surfaceHover : T.primaryHover },
+          onMouseLeave: event => { event.currentTarget.style.background = needsSync ? T.surface : T.primary },
+          style: {
+            appearance: 'none', border: needsSync ? `1px solid ${T.border}` : '1px solid transparent',
+            borderRadius: 9, height: 30, width: '100%', fontSize: 12, fontWeight: 600,
+            font: 'inherit',
+            background: needsSync ? T.surface : T.primary,
+            color: needsSync ? T.text : T.primaryText,
+            boxShadow: needsSync ? 'none' : '0 1px 2px rgba(0,0,0,.14)',
+            cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.55 : 1,
+            transition: `background .15s ${T.ease}, opacity .15s ${T.ease}`,
+          },
+        }, busy ? (needsSync ? t('syncing') : t('committing')) : needsSync ? `⟳ ${t('syncChanges')} ${behind}↓` : `✓ ${t('commit')}`))
+        : null
+      const cleanState = !dirty && !needsSync && status.phase === 'ready' ? h('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 2px 2px' },
+      },
+        h('span', {
+          style: {
+            width: 18, height: 18, flex: '0 0 18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: '50%', background: tint(T.success, 14), color: T.success,
+          },
+        }, h('svg', { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 3, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M5 13l4 4L19 7' }))),
+        h('span', { style: { fontSize: 12, color: T.ink2 } }, t('cleanTree')))
+        : null
+      const syncWhenClean = !dirty && needsSync ? h('button', {
+        type: 'button', onClick: sync, disabled: busy,
+        onMouseEnter: event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = T.primaryHover },
+        onMouseLeave: event => { event.currentTarget.style.background = T.primary },
+        style: {
+          appearance: 'none', border: '1px solid transparent', borderRadius: 8, height: 28, padding: '0 12px',
+          fontSize: 11.5, fontWeight: 600, font: 'inherit', background: T.primary, color: T.primaryText,
+          cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.55 : 1, whiteSpace: 'nowrap',
+        },
+      }, busy ? t('syncing') : `⟳ ${t('syncChanges')} ${behind}↓`) : null
       return [h('div', {
         key: 'card',
-        style: { margin: '6px 8px', borderRadius: T.rMd, border: `0.5px solid ${T.border}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 34%, transparent)', overflow: 'hidden' },
+        style: {
+          marginBottom: 8, borderRadius: T.rMd, background: T.surface, boxShadow: T.edge, overflow: 'hidden',
+        },
       },
         h('div', {
           onClick: () => { setOpen(value => !value); onSelect?.(item.path) },
-          style: { display: 'flex', alignItems: 'center', gap: 7, minHeight: 30, padding: '0 8px', cursor: 'pointer', borderBottom: open ? `0.5px solid ${T.borderSoft}` : 'none' },
+          style: {
+            display: 'flex', alignItems: 'center', gap: 7, minHeight: 36, padding: '0 12px', cursor: 'pointer',
+            background: open ? T.surfaceAlt : T.surface,
+            borderBottom: open ? `1px solid ${T.borderSoft}` : 'none',
+            transition: `background .15s ${T.ease}`,
+          },
+          onMouseEnter: event => { event.currentTarget.style.background = T.surfaceAlt },
+          onMouseLeave: event => { event.currentTarget.style.background = open ? T.surfaceAlt : T.surface },
         },
           h(Chevron, { open, size: 9 }),
-          h('span', { style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap' } }, displayName),
-          branchLabel !== displayName ? h('span', { style: { fontSize: 11, color: T.ink2, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 170 } }, branchLabel) : null,
-          h('span', { style: { fontSize: 9.5, color: T.subtle, border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '1px 7px', whiteSpace: 'nowrap', flex: '0 0 auto' } }, item.isMain ? t('mainWorktree') : t('worktree')),
+          h('span', { title: item.path, style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 72, flex: '0 1 auto' } }, displayName),
+          branchLabel !== displayName ? h('span', {
+            title: branchLabel,
+            style: {
+              fontFamily: MONO, fontSize: 10.5, color: T.ink2, background: T.chip, borderRadius: 5,
+              padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 104, flex: '0 2 auto', overflow: 'hidden', textOverflow: 'ellipsis',
+            },
+          }, branchLabel) : null,
+          item.isMain ? h('span', {
+            style: {
+              fontSize: 9.5, fontWeight: 500, color: T.muted, border: `1px solid ${T.border}`, borderRadius: T.pill,
+              padding: '0 7px', lineHeight: '15px', whiteSpace: 'nowrap', flex: '0 0 auto',
+            },
+          }, t('mainWorktree')) : null,
           h('span', { style: { flex: 1 } }),
           h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
           stashes.items.length > 0 ? h('button', {
@@ -1016,105 +1139,66 @@ window.__ModuleLoader__.load({
               setStashMenu({ x: rect.left, y: rect.bottom + 4 })
             },
             style: {
-              appearance: 'none', border: `0.5px solid ${T.border}`, background: 'transparent', color: T.ink2,
-              display: 'inline-flex', alignItems: 'center', gap: 4, height: 20, padding: '0 8px', borderRadius: T.pill,
-              cursor: 'pointer', fontSize: 10.5, fontFamily: MONO,
+              appearance: 'none', border: `1px solid ${T.border}`, background: T.surface, color: T.ink2,
+              display: 'inline-flex', alignItems: 'center', gap: 3, height: 20, padding: '0 7px', borderRadius: T.pill,
+              cursor: 'pointer', fontSize: 10, fontFamily: MONO,
             },
           }, h(IconStash), String(stashes.items.length)) : null,
           h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshStatus(); loadStashes() } }, h(RefreshIcon, {}))),
-        open ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '6px 8px 8px' } },
-          h('textarea', {
-            ref: messageRef, rows: 2, placeholder: `${t('commitPlaceholder')} · ${branchLabel}`,
-            style: { width: '100%', boxSizing: 'border-box', resize: 'vertical', background: 'transparent', color: 'inherit', border: `0.5px solid ${T.border}`, borderRadius: T.rSm, padding: '5px 8px', fontSize: 12, fontFamily: 'inherit', outline: 'none', lineHeight: '17px' },
-            onKeyDown: event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); commit() } },
-          }),
-          h('button', {
-            type: 'button', onClick: needsSync ? sync : commit, disabled: busy || (!needsSync && !data),
-            style: {
-              appearance: 'none', border: `0.5px solid ${T.border}`, borderRadius: T.rSm, height: 27,
-              background: needsSync ? T.selected : 'transparent', color: T.ink2, fontSize: 11.5,
-              cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1,
-            },
-          }, busy ? (needsSync ? t('syncing') : t('committing')) : needsSync ? `⟳ ${t('syncChanges')} ${behind}↓` : `✓ ${t('commit')}`),
-          stagedFiles.length > 0 ? h('div', {
-            onClick: () => toggleSection('staged'),
-            style: {
-              display: 'flex', alignItems: 'center', gap: 4, margin: '0 4px', padding: '2px 6px 0',
-              borderRadius: T.rSm, cursor: 'pointer', transition: `background .12s ${T.ease}`,
-            },
-            onMouseEnter: event => { event.currentTarget.style.background = T.hover },
-            onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
-          },
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 11, fontWeight: 600 } },
-              h(Chevron, { open: !collapsedSections.has('staged'), size: 8 }),
-              h('span', null, t('staged'))),
-            h('span', { style: { flex: 1 } }),
-            h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center' } },
+        open ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px 12px' } },
+          composer,
+          cleanState,
+          !dirty && needsSync ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('span', { style: { flex: 1, fontSize: 12, color: T.ink2 } }, t('cleanTree')),
+            syncWhenClean) : null,
+          stagedFiles.length > 0 ? h('div', { style: { borderTop: `1px solid ${T.borderSoft}`, paddingTop: 4 } },
+            sectionHeader(t('staged'), stagedFiles.length, !collapsedSections.has('staged'), () => toggleSection('staged'),
               h(IconAction, { label: t('unstageAll'), disabled: busy, onClick: () => optimisticStage(stagedFiles, true) }, h(IconMinus))),
-            h('span', { style: { fontSize: 11, color: T.subtle } }, String(stagedFiles.length))) : null,
-          stagedFiles.length > 0 && !collapsedSections.has('staged')
-            ? h(TreeRows, {
-                node: stagedTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
-                onOpen: file => onOpen(file, item.path),
-                selectedKey: selectedPath ? `s:${selectedPath}` : undefined,
-                actionsFor: file => h('span', { style: { display: 'inline-flex', gap: 1 } },
-                  h(IconAction, {
-                    label: t('unstage'), disabled: busy,
-                    onClick: event => { event.stopPropagation(); optimisticStage([file], true) },
-                  }, h(IconMinus)),
-                  h(IconAction, { label: t('moreFileActions'), onClick: event => openRowMenu(file, true, event) }, h(IconMore))),
-                statusByPath: stagedStatus, showStatus: true,
-                hoveredKey, onHoverKey: setHoveredKey,
-              })
-            : null,
-          changeFiles.length > 0 ? h('div', {
-            onClick: () => toggleSection('changes'),
-            style: {
-              display: 'flex', alignItems: 'center', gap: 4, margin: '0 4px', padding: '4px 6px 0',
-              borderRadius: T.rSm, cursor: 'pointer', transition: `background .12s ${T.ease}`,
-            },
-            onMouseEnter: event => { event.currentTarget.style.background = T.hover },
-            onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
-          },
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 11, fontWeight: 600 } },
-              h(Chevron, { open: !collapsedSections.has('changes'), size: 8 }),
-              h('span', null, t('changes'))),
-            h('span', { style: { flex: 1 } }),
-            h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center', gap: 1 } },
-              h(IconAction, {
-                label: t('discardAll'), danger: true, disabled: busy || changeFiles.length === 0,
-                onClick: () => onDiscardAll?.(changeFiles.map(file => file.path)),
-              }, h(IconUndo)),
-              h(IconAction, {
-                label: t('stashPush'), disabled: busy,
-                onClick: () => stashPushChanges(),
-              }, h(IconStash)),
-              h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => optimisticStage(changeFiles, false) }, h(IconPlus))),
-            h('span', { style: { fontSize: 11, color: T.subtle } }, String(changeFiles.length))) : null,
-          changeFiles.length > 0 && !collapsedSections.has('changes')
-            ? h(TreeRows, {
-                node: changeTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
-                onOpen: file => onOpen(file, item.path),
-                selectedKey: selectedPath ? `f:${selectedPath}` : undefined,
-                actionsFor: file => h('span', { style: { display: 'inline-flex', gap: 1 } },
-                  h(IconAction, {
-                    label: t('discard'), danger: true, disabled: busy,
-                    onClick: event => { event.stopPropagation(); runAction(() => apiPost('/discard', { path: item.path, files: [file.path] })) },
-                  }, h(IconUndo)),
-                  h(IconAction, {
-                    label: t('stage'), disabled: busy,
-                    onClick: event => { event.stopPropagation(); optimisticStage([file], false) },
-                  }, h(IconPlus)),
-                  h(IconAction, { label: t('moreFileActions'), onClick: event => openRowMenu(file, false, event) }, h(IconMore))),
-                statusByPath: changeStatus, showStatus: true,
-                hoveredKey, onHoverKey: setHoveredKey,
-              })
-            : null,
-          stagedFiles.length === 0 && changeFiles.length === 0
-            ? h('div', { style: { fontSize: 11, color: T.subtle, padding: '2px 0 2px 2px' } }, t('cleanTree'))
-            : null,
-          status.phase === 'loading' ? h('div', { style: { fontSize: 10.5, color: T.muted } }, t('loading')) : null,
-          status.phase === 'error' ? h('div', { style: { fontSize: 10.5, color: T.error } }, status.error) : null) : null),
+            !collapsedSections.has('staged')
+              ? h(TreeRows, {
+                  node: stagedTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
+                  onOpen: file => onOpen(file, item.path),
+                  selectedKey: selectedPath ? `s:${selectedPath}` : undefined,
+                  actionsFor: file => h('span', { style: { display: 'inline-flex', gap: 1 } },
+                    h(IconAction, {
+                      label: t('unstage'), disabled: busy,
+                      onClick: event => { event.stopPropagation(); optimisticStage([file], true) },
+                    }, h(IconMinus)),
+                    h(IconAction, { label: t('moreFileActions'), onClick: event => openRowMenu(file, true, event) }, h(IconMore))),
+                  statusByPath: stagedStatus, showStatus: true,
+                  hoveredKey, onHoverKey: setHoveredKey,
+                })
+              : null) : null,
+          changeFiles.length > 0 ? h('div', { style: { borderTop: `1px solid ${T.borderSoft}`, paddingTop: 4 } },
+            sectionHeader(t('changes'), changeFiles.length, !collapsedSections.has('changes'), () => toggleSection('changes'),
+              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 1 } },
+                h(IconAction, {
+                  label: t('discardAll'), danger: true, disabled: busy || changeFiles.length === 0,
+                  onClick: () => onDiscardAll?.(changeFiles.map(file => file.path)),
+                }, h(IconUndo)),
+                h(IconAction, { label: t('stashPush'), disabled: busy, onClick: () => stashPushChanges() }, h(IconStash)),
+                h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => optimisticStage(changeFiles, false) }, h(IconPlus)))),
+            !collapsedSections.has('changes')
+              ? h(TreeRows, {
+                  node: changeTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
+                  onOpen: file => onOpen(file, item.path),
+                  selectedKey: selectedPath ? `f:${selectedPath}` : undefined,
+                  actionsFor: file => h('span', { style: { display: 'inline-flex', gap: 1 } },
+                    h(IconAction, {
+                      label: t('discard'), danger: true, disabled: busy,
+                      onClick: event => { event.stopPropagation(); runAction(() => apiPost('/discard', { path: item.path, files: [file.path] })) },
+                    }, h(IconUndo)),
+                    h(IconAction, {
+                      label: t('stage'), disabled: busy,
+                      onClick: event => { event.stopPropagation(); optimisticStage([file], false) },
+                    }, h(IconPlus)),
+                    h(IconAction, { label: t('moreFileActions'), onClick: event => openRowMenu(file, false, event) }, h(IconMore))),
+                  statusByPath: changeStatus, showStatus: true,
+                  hoveredKey, onHoverKey: setHoveredKey,
+                })
+              : null) : null,
+          status.phase === 'loading' ? h('div', { style: { fontSize: 11.5, color: T.muted, padding: '2px 0' } }, t('loading')) : null,
+          status.phase === 'error' ? h('div', { style: { fontSize: 11.5, color: T.error, padding: '2px 0' } }, status.error) : null) : null),
         rowMenuElement, stashMenuElement]
     }
     /** Multi-file diff for one commit: file cards with collapse, wrap and per-file diff. */
@@ -1168,9 +1252,7 @@ window.__ModuleLoader__.load({
               }, entry.path),
               h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.success } }, `+${additions}`),
               h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.error } }, `−${deletions}`),
-              h('span', {
-                style: { width: 14, marginLeft: 2, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: STATUS_COLOR[entry.status] ?? T.subtle },
-              }, entry.status ?? 'M')),
+              h(StatusChip, { status: entry.status ?? 'M', size: 15 })),
             isCollapsed
               ? null
               : h('div', { style: { padding: '2px 0 6px' } },
@@ -1289,17 +1371,18 @@ window.__ModuleLoader__.load({
       return value === 'open' ? T.success : '#a371f7'
     }
 
+    /**
+     * GitHub label chips: a light tint of the label hue for the fill, and that hue pulled toward the
+     * theme's primary text for the label itself — so pale labels (#a2eeef) stay readable on white.
+     */
     function labelChipStyle(color) {
       const hex = String(color ?? '').replace(/^#/, '')
-      let dark = true
-      if (/^[0-9a-f]{6}$/i.test(hex)) {
-        const red = parseInt(hex.slice(0, 2), 16)
-        const green = parseInt(hex.slice(2, 4), 16)
-        const blue = parseInt(hex.slice(4, 6), 16)
-        dark = 0.2126 * red + 0.7152 * green + 0.0722 * blue < 140
-      }
       const base = /^[0-9a-f]{6}$/i.test(hex) ? `#${hex}` : 'currentColor'
-      return { background: `color-mix(in srgb, ${base} 18%, transparent)`, color: dark ? base : `color-mix(in srgb, ${base} 78%, #fff)`, border: `0.5px solid color-mix(in srgb, ${base} 40%, transparent)` }
+      return {
+        background: `color-mix(in srgb, ${base} 15%, transparent)`,
+        color: `color-mix(in srgb, ${base} 52%, var(--dsw-alias-label-primary, #0f1115))`,
+        border: `1px solid color-mix(in srgb, ${base} 26%, transparent)`,
+      }
     }
 
     function IssueCard({ t, issue, selected, onClick }) {
@@ -1309,15 +1392,14 @@ window.__ModuleLoader__.load({
         onClick,
         onKeyDown: event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick() } },
         style: {
-          display: 'flex', flexDirection: 'column', gap: 7, padding: '9px 10px', minHeight: 104,
-          borderRadius: T.rMd, cursor: 'pointer', position: 'relative',
-          background: selected
-            ? `color-mix(in srgb, ${T.accent} 10%, var(--dsw-alias-bg-layer-2, transparent))`
-            : 'color-mix(in srgb, var(--dsw-alias-bg-layer-2, currentColor) 32%, transparent)',
-          border: `${selected ? '1.5px' : '0.5px'} solid ${selected ? T.accent : T.border}`,
-          boxShadow: selected ? T.shadowProminent : 'none',
-          transition: `border-color .15s ${T.ease}, background .15s ${T.ease}, box-shadow .15s ${T.ease}`,
+          display: 'flex', flexDirection: 'column', gap: 7, padding: '10px 11px', minHeight: 104,
+          borderRadius: 10, cursor: 'pointer', position: 'relative',
+          background: selected ? tint(T.accent, 7) : T.surface,
+          boxShadow: selected ? `inset 0 0 0 1.5px ${T.accent}, 0 2px 8px rgba(0,0,0,.05)` : T.ring,
+          transition: `box-shadow .15s ${T.ease}, background .15s ${T.ease}`,
         },
+        onMouseEnter: event => { if (!selected) event.currentTarget.style.boxShadow = `${T.ring}, 0 2px 10px rgba(0,0,0,.07)` },
+        onMouseLeave: event => { if (!selected) event.currentTarget.style.boxShadow = T.ring },
       },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
           h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted } }, `#${issue.number}`),
@@ -1372,8 +1454,15 @@ window.__ModuleLoader__.load({
           .finally(() => setToggling(false))
       }
       if (!state || state.phase === 'idle') {
-        return h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, color: T.muted, textAlign: 'center' } },
-          h('div', { style: { fontFamily: T.serif, fontSize: 16, color: T.ink2 } }, t('issueDetailEmpty')))
+        return h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24, color: T.muted, textAlign: 'center' } },
+          h('div', {
+            style: {
+              width: 44, height: 44, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: T.surfaceAlt, boxShadow: T.ring, color: T.muted,
+            },
+          }, h('svg', { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' },
+            h('circle', { cx: 12, cy: 12, r: 9 }), h('path', { d: 'M12 8v5' }), h('circle', { cx: 12, cy: 16.5, r: 0.6, fill: 'currentColor' }))),
+          h('div', { style: { fontSize: 12.5, color: T.ink2 } }, t('issueDetailEmpty')))
       }
       if (state.phase === 'loading') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
       if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
@@ -1381,9 +1470,9 @@ window.__ModuleLoader__.load({
       if (!issue) return null
       const commentItems = comments?.data?.comments ?? []
       return h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: `0.5px solid ${T.borderSoft}`, flex: '0 0 auto' } },
-          h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted } }, `#${issue.number}`),
-          h('span', { style: { fontSize: 10, fontWeight: 600, padding: '1px 8px', lineHeight: '15px', borderRadius: T.pill, whiteSpace: 'nowrap', color: issueStateColor(issue.state), border: `0.5px solid ${issueStateColor(issue.state)}` } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '0 12px', minHeight: 36, background: T.surfaceAlt, borderBottom: `1px solid ${T.borderSoft}`, flex: '0 0 auto' } },
+          h('span', { style: { fontFamily: MONO, fontSize: 11, fontWeight: 600, color: T.ink2 } }, `#${issue.number}`),
+          h('span', { style: { fontSize: 10, fontWeight: 600, padding: '0 8px', lineHeight: '16px', borderRadius: T.pill, whiteSpace: 'nowrap', color: issueStateColor(issue.state), background: tint(issueStateColor(issue.state), 12) } },
             issue.state === 'closed' ? t('issueStateClosed') : t('issueStateOpen')),
           h('span', { style: { flex: 1 } }),
           onToggleState ? h(SmallButton, {
@@ -1410,8 +1499,8 @@ window.__ModuleLoader__.load({
             issue.updatedAt ? h('span', null, `${t('issueUpdated')} ${formatRelativeTime(Math.floor(new Date(issue.updatedAt).getTime() / 1000))}`) : null,
             issue.author ? h('span', null, `@${issue.author}`) : null),
           (issue.parent || (issue.children?.length ?? 0) > 0)
-            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', borderRadius: T.rSm, background: T.hover } },
-                h('div', { style: { fontSize: 10, color: T.subtle } }, t('issueRelations')),
+            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 10px', borderRadius: 9, background: T.well, boxShadow: `inset 0 0 0 1px ${T.borderSoft}` } },
+                h('div', { style: { fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.muted } }, t('issueRelations')),
                 issue.parent
                   ? h('button', {
                       type: 'button', onClick: () => onNavigate?.(issue.parent.number),
@@ -1426,8 +1515,8 @@ window.__ModuleLoader__.load({
           issue.body
             ? h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 10 } }, h(MarkdownBody, { text: issue.body }))
             : null,
-          h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
-            h('div', { style: { fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: '0.02em' } }, `${issue.comments ?? 0} ${t('issueComments')}`),
+          h('div', { style: { borderTop: `1px solid ${T.borderSoft}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8 } },
+            h('div', { style: { fontSize: 10.5, fontWeight: 700, color: T.muted, letterSpacing: '0.08em', textTransform: 'uppercase' } }, `${issue.comments ?? 0} ${t('issueComments')}`),
             comments?.phase === 'loading'
               ? h('div', { style: { fontSize: 11, color: T.muted } }, t('loading'))
               : comments?.phase === 'error'
@@ -1437,36 +1526,46 @@ window.__ModuleLoader__.load({
                   : commentItems.map(comment => h('div', {
                       key: comment.id,
                       style: {
-                        border: `0.5px solid ${T.borderSoft}`, borderRadius: T.rSm, padding: '8px 10px',
-                        background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 30%, transparent)',
-                        display: 'flex', flexDirection: 'column', gap: 5,
+                        boxShadow: T.ring, borderRadius: 9, padding: '9px 11px', background: T.surface,
+                        display: 'flex', flexDirection: 'column', gap: 6,
                       },
                     },
-                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: T.subtle } },
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: T.muted } },
                         h('span', {
                           title: comment.author,
                           style: {
-                            width: 18, height: 18, borderRadius: '50%', flex: '0 0 auto', display: 'inline-flex',
+                            width: 20, height: 20, borderRadius: '50%', flex: '0 0 auto', display: 'inline-flex',
                             alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700,
-                            background: 'color-mix(in srgb, var(--dsw-alias-brand-primary, #7aa2ff) 22%, transparent)',
-                            color: T.ink2,
+                            background: tint(T.brand, 20), color: T.brand,
                           },
                         }, (comment.author || '?').slice(0, 1).toUpperCase()),
-                        h('span', { style: { fontWeight: 600, color: T.ink2 } }, comment.author ? `@${comment.author}` : ''),
-                        comment.createdAt ? h('span', null, formatRelativeTime(Math.floor(new Date(comment.createdAt).getTime() / 1000))) : null),
+                        h('span', { style: { fontWeight: 600, color: T.text } }, comment.author ? `@${comment.author}` : ''),
+                        comment.createdAt ? h('span', { style: { color: T.subtle } }, formatRelativeTime(Math.floor(new Date(comment.createdAt).getTime() / 1000))) : null),
                       h(MarkdownBody, { text: comment.body }))),
-            onCommentPost ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 9px', borderRadius: T.rSm, border: `0.5px solid ${T.borderSoft}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 26%, transparent)' } },
+            onCommentPost ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 7, padding: 9, borderRadius: 10, background: T.well, boxShadow: `inset 0 0 0 1px ${T.borderSoft}` } },
               h('textarea', {
                 ref: composerRef, rows: 2, placeholder: t('commentPlaceholder'),
+                onFocus: event => { event.currentTarget.parentElement.style.boxShadow = `inset 0 0 0 1px ${T.accent}, 0 0 0 3px ${tint(T.accent, 14)}` },
+                onBlur: event => { event.currentTarget.parentElement.style.boxShadow = `inset 0 0 0 1px ${T.borderSoft}` },
                 style: {
                   width: '100%', boxSizing: 'border-box', resize: 'vertical', background: 'transparent', color: 'inherit',
-                  border: 'none', outline: 'none', fontSize: 12, fontFamily: 'inherit', lineHeight: '17px', padding: 0,
+                  border: 'none', outline: 'none', fontSize: 12.5, fontFamily: 'inherit', lineHeight: '18px', padding: 0,
+                  minHeight: 40,
                 },
                 onKeyDown: event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); postComment() } },
               }),
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
                 h('span', { style: { flex: 1, fontSize: 10, color: T.subtle } }, '⌘/Ctrl + Enter'),
-                h(SmallButton, { label: sending ? t('commentSending') : t('commentSend'), onClick: postComment, disabled: sending }))) : null)))
+                h('button', {
+                  type: 'button', onClick: postComment, disabled: sending,
+                  onMouseEnter: event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = T.primaryHover },
+                  onMouseLeave: event => { event.currentTarget.style.background = T.primary },
+                  style: {
+                    appearance: 'none', border: '1px solid transparent', borderRadius: 7, height: 26, padding: '0 12px',
+                    fontSize: 11.5, fontWeight: 600, font: 'inherit', background: T.primary, color: T.primaryText,
+                    cursor: sending ? 'default' : 'pointer', opacity: sending ? 0.55 : 1,
+                  },
+                }, sending ? t('commentSending') : t('commentSend')))) : null)))
     }
 
     function IssuesPane({ t, state, selectedNumber, onSelect, search, onSearch, stateFilter, onStateFilter, onRefresh, onLoadMore }) {
@@ -1475,18 +1574,17 @@ window.__ModuleLoader__.load({
       return h('div', { style: { flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 } },
         h('div', {
           style: {
-            flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '0 10px',
-            minWidth: 0, borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
-            boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)',
+            flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 40, padding: '0 8px',
+            minWidth: 0, borderRadius: T.rMd, background: T.surface, boxShadow: T.edge,
           },
         },
           h('input', {
             value: search, placeholder: t('issueSearchPlaceholder'),
             onChange: event => onSearch(event.target.value),
             style: {
-              flex: 1, minWidth: 80, height: 26, borderRadius: T.pill, padding: '0 11px', fontSize: 11.5, color: 'inherit',
-              background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 40%, transparent)',
-              border: `0.5px solid ${T.border}`, outline: 'none',
+              flex: 1, minWidth: 80, height: 28, borderRadius: T.rSm, padding: '0 10px', fontSize: 12, color: 'inherit',
+              background: T.well,
+              border: `1px solid ${T.borderSoft}`, outline: 'none',
             },
           }),
           h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: T.pill, background: T.hover, border: `0.5px solid ${T.borderSoft}` } },
@@ -1503,9 +1601,8 @@ window.__ModuleLoader__.load({
           h(IconButton, { label: t('refresh'), onClick: onRefresh }, h(RefreshIcon, {}))),
         h('div', {
           style: {
-            flex: 1, minHeight: 0, overflowY: 'auto', borderRadius: T.rLg,
-            background: T.glass, border: `0.5px solid ${T.border}`, boxShadow: T.shadowSoft,
-            backdropFilter: 'blur(24px) saturate(160%)', padding: 10,
+            flex: 1, minHeight: 0, overflowY: 'auto', borderRadius: T.rMd,
+            background: T.surface, boxShadow: T.edge, padding: 10,
           },
         },
           state.phase === 'loading' && issues.length === 0
@@ -1738,15 +1835,14 @@ window.__ModuleLoader__.load({
       }
       const frameStyle = {
         position: 'absolute', left: 20, bottom: 18, width: Math.max(140, width - 16), zIndex: 40,
-        borderRadius: T.rMd, background: T.glass, border: `0.5px solid ${T.border}`,
-        boxShadow: T.shadowProminent, backdropFilter: 'blur(24px) saturate(160%)', overflow: 'hidden',
+        borderRadius: T.rMd, background: T.surface, boxShadow: T.edgeStrong, overflow: 'hidden',
         display: 'flex', flexDirection: 'column',
-        height: expanded ? height : 28,
+        height: expanded ? height : 30,
         transition: 'height .18s ' + T.ease,
       }
       const header = h('div', {
         onClick: () => setExpanded(value => !value),
-        style: { display: 'flex', alignItems: 'center', gap: 7, minHeight: 28, padding: '0 10px', cursor: 'pointer', flex: '0 0 auto' },
+        style: { display: 'flex', alignItems: 'center', gap: 7, minHeight: 30, padding: '0 10px', cursor: 'pointer', flex: '0 0 auto', borderBottom: expanded ? `1px solid ${T.borderSoft}` : 'none' },
       },
         h(Chevron, { open: expanded, size: 9 }),
         h('span', { style: { fontSize: 11.5, fontWeight: 600, color: T.ink2 } }, t('graphTitle')),
@@ -1885,7 +1981,7 @@ window.__ModuleLoader__.load({
                                         onMouseEnter: event => { event.currentTarget.style.background = T.hover },
                                         onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
                                       },
-                                        h('span', { style: { width: 12, textAlign: 'center', fontWeight: 700, fontSize: 10, color: STATUS_COLOR[file.status] ?? T.subtle } }, file.status ?? 'M'),
+                                        h(StatusChip, { status: file.status ?? 'M', size: 14 }),
                                         h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.ink2 } }, file.path),
                                         h('span', { style: { fontFamily: MONO, fontSize: 9.5, color: T.success } }, `+${file.additions}`),
                                         h('span', { style: { fontFamily: MONO, fontSize: 9.5, color: T.error } }, `−${file.deletions}`)))))
@@ -2280,7 +2376,7 @@ window.__ModuleLoader__.load({
               display: 'flex', alignItems: 'center', gap: 5, minHeight: 21, margin: '0 4px',
               padding: `1px 6px 1px ${8 + depth * 13}px`, borderRadius: T.rSm, cursor: 'pointer',
               background: selected ? T.selected : 'transparent',
-              color: statusLetter ? (STATUS_COLOR[statusLetter] ?? T.ink2) : T.ink2,
+              color: T.ink2,
               fontSize: 12,
             },
             onMouseEnter: event => { if (!selected) event.currentTarget.style.background = T.hover; setHoveredKey(entry.path) },
@@ -2290,7 +2386,7 @@ window.__ModuleLoader__.load({
             isDir ? h(Chevron, { open: expanded, size: 8 }) : h('span', { style: { width: 8, flex: '0 0 8px' } }),
             h(FileGlyph, { name: entry.name, kind: entry.kind, expanded }),
             h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, entry.name),
-            statusLetter ? h('span', { style: { fontSize: 10, fontWeight: 700, color: STATUS_COLOR[statusLetter] ?? T.subtle } }, statusLetter) : null))
+            statusLetter ? h(StatusChip, { status: statusLetter, size: 15 }) : null))
           if (isDir && expanded) walk(entry.path, depth + 1)
         }
         if (node.truncated) rows.push(h('div', { key: `${dirPath}:truncated`, style: { fontSize: 10, color: T.subtle, padding: `2px 8px 2px ${10 + depth * 13}px` } }, '…'))
@@ -2353,20 +2449,28 @@ window.__ModuleLoader__.load({
       }
       return h(CardBoundary, null,
         h('div', {
-          style: { margin: '6px 8px', flex: open ? '1 0 auto' : '0 0 auto', minHeight: open ? 0 : undefined, display: 'flex', flexDirection: 'column', borderRadius: T.rMd, border: `0.5px solid ${T.border}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 34%, transparent)', overflow: 'hidden' },
+          style: { marginBottom: 8, flex: open ? '1 0 auto' : '0 0 auto', minHeight: open ? 0 : undefined, display: 'flex', flexDirection: 'column', borderRadius: T.rMd, background: T.surface, boxShadow: T.edge, overflow: 'hidden' },
         },
           h('div', {
             onClick: () => { setOpen(value => !value); onSelect?.(item.path) },
-            style: { display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, padding: '0 8px', cursor: 'pointer', borderBottom: open ? `0.5px solid ${T.borderSoft}` : 'none' },
+            style: {
+              display: 'flex', alignItems: 'center', gap: 7, minHeight: 36, padding: '0 12px', cursor: 'pointer',
+              background: open ? T.surfaceAlt : T.surface,
+              borderBottom: open ? `1px solid ${T.borderSoft}` : 'none',
+            },
+            onMouseEnter: event => { event.currentTarget.style.background = T.surfaceAlt },
+            onMouseLeave: event => { event.currentTarget.style.background = open ? T.surfaceAlt : T.surface },
           },
             h(Chevron, { open, size: 9 }),
-            h('span', { style: { fontSize: 12, fontWeight: 600, color: T.text } }, item.name ?? item.path.split('/').pop()),
-            h('span', { style: { fontSize: 11, color: T.ink2, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 170 } }, item.branch ?? t('detached')),
-            h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
+            h('span', { title: item.path, style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 72, flex: '0 1 auto' } }, item.name ?? item.path.split('/').pop()),
+            item.branch ? h('span', {
+              style: { fontFamily: MONO, fontSize: 10.5, color: T.ink2, background: T.chip, borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 104, flex: '0 2 auto', overflow: 'hidden', textOverflow: 'ellipsis' },
+            }, item.branch) : null,
             h('span', { style: { flex: 1 } }),
+            h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
             h('span', { style: { fontSize: 10.5, color: T.subtle } }, dirs['']?.phase === 'ready' ? String(rootEntries.length) : ''),
             h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshFiles() } }, h(RefreshIcon, {}))),
-          open ? h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 6px' } }, rows) : null))
+          open ? h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '6px 4px 8px' } }, rows) : null))
     }
 
     function formatRelativeTime(epochSeconds) {
@@ -2564,9 +2668,9 @@ window.__ModuleLoader__.load({
       return h('button', {
         type: 'button', title: label, 'aria-label': label, onClick, disabled,
         style: {
-          appearance: 'none', border: 'none', background: 'transparent', color: danger ? T.error : T.muted,
+          appearance: 'none', border: 'none', background: 'transparent', color: danger ? T.muted : T.ink2,
           cursor: disabled ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center',
-          justifyContent: 'center', width: 22, height: 22, borderRadius: T.rSm, padding: 0,
+          justifyContent: 'center', width: 22, height: 22, borderRadius: 6, padding: 0,
           opacity: disabled ? 0.3 : 1, transition: `background .15s ${T.ease}, color .15s ${T.ease}`,
         },
         onMouseEnter: event => { if (!disabled) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = danger ? T.error : T.text; showTooltip(label, event.currentTarget) } },
@@ -2585,17 +2689,18 @@ window.__ModuleLoader__.load({
     const IconHistory = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M3.5 12a8.5 8.5 0 1 0 2.5-6' }), h('path', { d: 'M3 4v4h4' }), h('path', { d: 'M12 8v4.5l3 2' }))
     const IconMore = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'currentColor', stroke: 'none' }, h('circle', { cx: 5, cy: 12, r: 1.7 }), h('circle', { cx: 12, cy: 12, r: 1.7 }), h('circle', { cx: 19, cy: 12, r: 1.7 }))
 
+    /** Secondary action: a real raised control (surface + hairline ring), never a ghost outline. */
     function SmallButton({ label, onClick, disabled, title }) {
       return h('button', {
         type: 'button', title: title ?? label, onClick, disabled,
         style: {
-          appearance: 'none', border: `0.5px solid ${T.lineStrong}`, background: 'transparent', color: T.ink2,
-          cursor: disabled ? 'default' : 'pointer', fontSize: 11, lineHeight: '18px', height: 22, padding: '0 10px',
-          borderRadius: T.pill, opacity: disabled ? 0.35 : 1, whiteSpace: 'nowrap',
-          transition: `background .15s ${T.ease}, color .15s ${T.ease}`,
+          appearance: 'none', border: '1px solid transparent', background: T.surface, color: T.text,
+          cursor: disabled ? 'default' : 'pointer', fontSize: 11.5, fontWeight: 500, lineHeight: '18px',
+          height: 26, padding: '0 11px', borderRadius: 8, opacity: disabled ? 0.4 : 1, whiteSpace: 'nowrap',
+          boxShadow: T.ring, transition: `background .15s ${T.ease}`,
         },
-        onMouseEnter: event => { if (!disabled) { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = T.text } },
-        onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = T.ink2 },
+        onMouseEnter: event => { if (!disabled) event.currentTarget.style.background = T.surfaceHover },
+        onMouseLeave: event => { event.currentTarget.style.background = T.surface },
       }, label)
     }
 
@@ -2672,9 +2777,9 @@ window.__ModuleLoader__.load({
         rows.push(h('div', {
           key: `dir:${directory.path}`,
           style: {
-            display: 'flex', alignItems: 'center', gap: 4, minHeight: 22, margin: '0 6px',
-            padding: `2px 8px 2px ${8 + depth * 13}px`, cursor: 'pointer', userSelect: 'none',
-            borderRadius: T.rSm, color: T.ink2, transition: `background .12s ${T.ease}`,
+            display: 'flex', alignItems: 'center', gap: 5, minHeight: 24, margin: '0 4px',
+            padding: `1px 7px 1px ${7 + depth * 13}px`, cursor: 'pointer', userSelect: 'none',
+            borderRadius: 6, color: T.ink2, transition: `background .12s ${T.ease}`,
           },
           onClick: () => onToggleDir(directory.path),
           onMouseEnter: event => { event.currentTarget.style.background = T.hover },
@@ -2682,9 +2787,9 @@ window.__ModuleLoader__.load({
         },
           h(Chevron, { open: expanded, size: 9 }),
           h(FileGlyph, { name: directory.name, kind: 'dir', expanded }),
-          h('span', { style: { fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: dirStatus ? (STATUS_COLOR[dirStatus] ?? T.ink2) : T.ink2 } }, directory.name),
+          h('span', { style: { fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, directory.name),
           h('span', { style: { flex: 1 } }),
-          h('span', { style: { fontSize: 10, fontWeight: 700, color: dirStatus ? (STATUS_COLOR[dirStatus] ?? T.subtle) : 'transparent', opacity: 0.85 } }, dirStatus ?? '')))
+          dirStatus ? h(StatusChip, { status: dirStatus, size: 15 }) : null))
         if (expanded) {
           rows.push(h(TreeRows, {
             key: `children:${directory.path}`, node: directory, depth: depth + 1, expandedDirs, onToggleDir,
@@ -2705,10 +2810,11 @@ window.__ModuleLoader__.load({
           onDragStart: event => { if (onDragStartRow) onDragStartRow(file, event) },
           onClick: event => onOpen(file, event),
           style: {
-            display: 'flex', alignItems: 'center', gap: 5, minHeight: 22, margin: '0 6px',
-            padding: `2px 8px 2px ${8 + depth * 13 + 13}px`,
+            display: 'flex', alignItems: 'center', gap: 6, minHeight: 25, margin: '0 4px',
+            padding: `1px 7px 1px ${7 + depth * 13 + 12}px`,
             cursor: 'pointer', background: active ? T.selected : 'transparent', minWidth: 0,
-            borderRadius: T.rSm, transition: `background .12s ${T.ease}`,
+            borderRadius: 6, transition: `background .12s ${T.ease}`,
+            boxShadow: active ? `inset 2px 0 0 ${T.accent}` : 'none',
           },
           onMouseEnter: event => { if (!active) event.currentTarget.style.background = T.hover; onHoverKey?.(key) },
           onMouseLeave: event => { if (!active) event.currentTarget.style.background = 'transparent'; if (hoveredKey === key) onHoverKey?.(undefined) },
@@ -2717,19 +2823,14 @@ window.__ModuleLoader__.load({
           h('span', {
             style: {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, fontSize: 12.5,
-              color: showStatus && status ? (STATUS_COLOR[status] ?? T.text) : T.text,
+              fontWeight: active ? 500 : 400, color: T.text,
             },
           }, file.name),
           h('span', { style: { flex: 1 } }),
           (hovered || active) && actionsFor
             ? h('span', { style: { display: 'inline-flex', gap: 1, alignItems: 'center', flex: '0 0 auto' } }, actionsFor(file))
             : null,
-          h('span', {
-            style: {
-              marginLeft: 3, width: 14, flex: '0 0 14px', textAlign: 'center', fontSize: 10.5, fontWeight: 700,
-              color: STATUS_COLOR[status] ?? T.subtle, opacity: status ? 0.9 : 0,
-            },
-          }, status ?? '')))
+          h(StatusChip, { status, size: 15 })))
       }
       return rows
     }
@@ -3106,6 +3207,32 @@ window.__ModuleLoader__.load({
     }
 
 
+    /**
+     * One small stylesheet for things inline styles cannot express: placeholder tone, textarea
+     * caret, and thin scrollbars that suit the card surfaces. Mounted once per panel tree.
+     */
+    const SURFACE_STYLE_ID = 'dsh-git-assistant-surface'
+    function ensureSurfaceStyle() {
+      if (typeof document === 'undefined') return undefined
+      if (document.getElementById(SURFACE_STYLE_ID)) return undefined
+      const style = document.createElement('style')
+      style.id = SURFACE_STYLE_ID
+      style.textContent = `
+        .ga-panel textarea::placeholder,
+        .ga-panel input::placeholder { color: var(--dsw-alias-label-caption, #adb2b8); opacity: 1; }
+        .ga-panel textarea, .ga-panel input { caret-color: var(--dsw-alias-link, #4176e6); }
+        .ga-panel ::-webkit-scrollbar { width: 9px; height: 9px; }
+        .ga-panel ::-webkit-scrollbar-thumb {
+          background: var(--dsw-alias-scrollbar-bg-l1, #e5e5e5); border-radius: 6px;
+          border: 2px solid transparent; background-clip: padding-box;
+        }
+        .ga-panel ::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-scrollbar-hover-l1, #d4d4d4); background-clip: padding-box; }
+        .ga-panel ::-webkit-scrollbar-track { background: transparent; }
+      `
+      document.head.appendChild(style)
+      return () => { try { style.remove() } catch { /* gone */ } }
+    }
+
     /* ── main panel ─────────────────────────────────────────────────── */
 
     function Panel({ t, ctx, sessionId, renderFactorySlot, inputActions }) {
@@ -3258,6 +3385,7 @@ window.__ModuleLoader__.load({
       }, [toast])
 
       const notify = useCallback((text, kind = 'info') => setToast({ text, kind }), [])
+      useEffect(() => ensureSurfaceStyle(), [])
       const postIssueComment = useCallback(async body => {
         if (!active?.path || !issueNumber) throw new Error('no issue selected')
         try {
@@ -3351,7 +3479,7 @@ window.__ModuleLoader__.load({
             },
           })
         : null
-      const worktreeFilesCards = h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '4px 0 6px' } },
+      const worktreeFilesCards = h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '10px 10px 12px' } },
         worktrees.items.map(item => h(WorktreeFilesCard, {
           key: item.path, t, item, defaultOpen: item.path === active?.path || Boolean(item.isMain), visible: mode === 'files',
           selectedPath: selection?.kind === 'file' ? selection.path : undefined,
@@ -3359,7 +3487,7 @@ window.__ModuleLoader__.load({
           onNotify: notify,
           onOpen: (file, repoPath) => { setGraphPath(repoPath); setSelection({ kind: 'file', path: file.path, repoPath }) },
         })))
-      const worktreeCards = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 44px' } },
+      const worktreeCards = h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 10px 44px' } },
         worktrees.items.map(item => h(WorktreeCard, {
           key: item.path, t, item, defaultOpen: item.path === active?.path || Boolean(item.isMain), visible: mode === 'changes',
           selectedPath: selection?.kind === 'diff' ? selection.path : undefined,
@@ -3602,37 +3730,24 @@ window.__ModuleLoader__.load({
       const behind = status.data?.behind ?? 0
 
       return h('div', {
-        style: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: T.text, fontSize: 13.5, lineHeight: 1.55, position: 'relative', overflow: 'hidden', fontFamily: T.sans, letterSpacing: '0.005em' },
-      },
-        // ambient wash — very low-saturation colour light behind the cards, as in the media workbench
-        h('div', {
-          'aria-hidden': true,
-          style: { position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none', opacity: 0.75 },
+        className: 'ga-panel',
+        style: {
+          display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: T.text,
+          fontSize: 13, lineHeight: 1.5, position: 'relative', overflow: 'hidden', fontFamily: T.sans,
+          letterSpacing: '0.002em', background: T.canvas,
         },
-          h('div', {
-            style: {
-              position: 'absolute', left: '-16%', top: '-32%', width: '58%', height: '66%', borderRadius: '50%',
-              filter: 'blur(80px)', background: 'radial-gradient(circle, color-mix(in srgb, var(--dsw-alias-link, #7aa2ff) 11%, transparent), transparent 70%)',
-            },
-          }),
-          h('div', {
-            style: {
-              position: 'absolute', right: '-14%', bottom: '-36%', width: '54%', height: '60%', borderRadius: '50%',
-              filter: 'blur(90px)', background: 'radial-gradient(circle, color-mix(in srgb, var(--dsw-alias-brand-primary, #a78bfa) 9%, transparent), transparent 70%)',
-            },
-          })),
+      },
         // ── title bar ──────────────────────────────────────────
         h('div', {
           style: {
-            display: 'flex', alignItems: 'center', gap: 8, minHeight: 48, padding: '0 12px',
-            margin: '10px 12px 0', borderRadius: T.rLg, background: T.glass,
-            border: `0.5px solid ${T.border}`, boxShadow: T.shadowSoft,
-            backdropFilter: 'blur(24px) saturate(160%)', flex: '0 0 auto', position: 'relative', zIndex: 2,
+            display: 'flex', alignItems: 'center', gap: 8, minHeight: 46, padding: '0 12px',
+            margin: '10px 12px 0', borderRadius: T.rMd, background: T.surface,
+            boxShadow: T.edge, flex: '0 0 auto', position: 'relative', zIndex: 2,
           },
         },
-          h('span', { style: { display: 'inline-flex', opacity: 0.6 } }, h(GitIcon, { size: 15 })),
-          h('span', { style: { fontFamily: T.serif, fontSize: 15.5, lineHeight: '20px', fontWeight: 500, letterSpacing: '0.015em', whiteSpace: 'nowrap' } }, t('title')),
-          h('span', { 'aria-hidden': true, style: { opacity: 0.25 } }, '·'),
+          h('span', { style: { display: 'inline-flex', color: T.ink2 } }, h(GitIcon, { size: 15 })),
+          h('span', { style: { fontSize: 14, lineHeight: '20px', fontWeight: 600, letterSpacing: '0.005em', whiteSpace: 'nowrap' } }, t('title')),
+          h('span', { 'aria-hidden': true, style: { color: T.subtle } }, '·'),
           h('div', { ref: menuRef, style: { position: 'relative', minWidth: 0 } },
             h('button', {
               type: 'button', onClick: () => setMenuOpen(open => !open), disabled: repositories.items.length === 0,
@@ -3680,10 +3795,10 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button', onClick: () => setBranchMenuOpen(open => !open), title: t('branches'),
               style: {
-                appearance: 'none', border: 'none', boxShadow: `inset 0 0 0 0.5px ${T.lineStrong}`,
-                background: branchMenuOpen ? T.hover : 'color-mix(in srgb, var(--dsw-alias-bg-layer-2, currentColor) 58%, transparent)',
+                appearance: 'none', border: `1px solid ${branchMenuOpen ? T.border : T.borderSoft}`,
+                background: branchMenuOpen ? T.surfaceHover : T.chip,
                 color: T.ink2, font: 'inherit',
-                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 11px', borderRadius: T.pill,
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: T.pill,
                 cursor: 'pointer', maxWidth: 260, minWidth: 0, transition: `background .18s ${T.ease}`,
               },
             },
@@ -3736,34 +3851,36 @@ window.__ModuleLoader__.load({
           ),
 
         // ── body ────────────────────────────────────────────────
-        h('div', { style: { display: 'flex', flex: 1, minHeight: 0, gap: 6, padding: '10px 12px 12px', minWidth: 0, position: 'relative' } },
+        h('div', { style: { display: 'flex', flex: 1, minHeight: 0, gap: 8, padding: '8px 12px 12px', minWidth: 0, position: 'relative' } },
           // left column
           h('div', {
             style: {
-              width: effectiveLeftWidth, flex: `0 0 ${effectiveLeftWidth}px`, minWidth: 240, borderRadius: T.rLg, background: T.glass,
-              border: `0.5px solid ${T.border}`, boxShadow: T.shadowSoft,
-              backdropFilter: 'blur(24px) saturate(160%)',
+              width: effectiveLeftWidth, flex: `0 0 ${effectiveLeftWidth}px`, minWidth: 240, borderRadius: T.rMd, background: T.surface,
+              boxShadow: T.edge,
               display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden',
             },
           },
             // mode tabs
-            h('div', { style: { padding: '10px 12px 2px' } },
+            h('div', { style: { padding: '10px 10px 4px', borderBottom: `1px solid ${T.borderSoft}` } },
               h('div', {
                 style: {
-                  display: 'inline-flex', gap: 0, padding: 3, borderRadius: T.rMd,
-                  background: T.hover, border: `0.5px solid ${T.borderSoft}`,
+                  display: 'flex', gap: 2, padding: 3, borderRadius: 10,
+                  background: T.chip, border: `1px solid ${T.borderSoft}`,
                 },
               },
                 ['changes', 'files', 'issues'].map(value => h('button', {
                   key: value, type: 'button', onClick: () => setMode(value),
                   style: {
-                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 11.5,
-                    height: 26, padding: '0 12px', borderRadius: T.rSm,
-                    background: mode === value ? T.card : 'transparent',
-                    color: mode === value ? T.text : T.muted,
-                    boxShadow: mode === value ? T.shadowSoft : 'none',
-                    transition: `background .2s ${T.ease}, color .2s ${T.ease}`,
+                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', flex: 1,
+                    fontSize: 12, fontWeight: mode === value ? 600 : 500,
+                    height: 26, padding: '0 10px', borderRadius: 7,
+                    background: mode === value ? T.surface : 'transparent',
+                    color: mode === value ? T.text : T.ink2,
+                    boxShadow: mode === value ? `${T.ring}, 0 1px 2px rgba(0,0,0,.05)` : 'none',
+                    transition: `background .18s ${T.ease}, color .18s ${T.ease}`,
                   },
+                  onMouseEnter: event => { if (mode !== value) event.currentTarget.style.color = T.text },
+                  onMouseLeave: event => { if (mode !== value) event.currentTarget.style.color = T.ink2 },
                 }, value === 'changes' ? t('changesTab') : value === 'files' ? t('filesTab') : t('issuesTab'))))),
 
             h('div', { style: { display: mode === 'changes' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 } }, worktreeCards),
@@ -3801,9 +3918,8 @@ window.__ModuleLoader__.load({
           },
             h('div', {
               style: {
-                flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 42, padding: '0 10px',
-                minWidth: 0, borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
-                boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)',
+                flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6, minHeight: 40, padding: '0 8px',
+                minWidth: 0, borderRadius: T.rMd, background: T.surface, boxShadow: T.edge,
                 position: 'relative', zIndex: 30,
               },
             },
@@ -3872,29 +3988,31 @@ window.__ModuleLoader__.load({
               h('button', {
                 type: 'button', onClick: () => setWrap(value => !value), title: t('wrapLines'),
                 style: {
-                  appearance: 'none', border: `0.5px solid ${T.border}`, cursor: 'pointer', height: 26, padding: '0 10px',
-                  borderRadius: T.pill, fontSize: 11, color: wrap ? T.text : T.muted, background: wrap ? T.hover : 'transparent',
+                  appearance: 'none', border: '1px solid transparent', cursor: 'pointer', height: 26, padding: '0 10px',
+                  borderRadius: 7, fontSize: 11.5, fontWeight: 500, font: 'inherit',
+                  color: wrap ? T.text : T.ink2, background: wrap ? T.chip : T.surface, boxShadow: wrap ? 'none' : T.ring,
                 },
               }, t('wrapLines')),
               h('button', {
                 type: 'button', onClick: () => setAllFilesCollapsed(value => !value),
                 disabled: selection?.kind !== 'commit-files', title: allFilesCollapsed ? t('expandAllFiles') : t('collapseAllFiles'),
                 style: {
-                  appearance: 'none', border: `0.5px solid ${T.border}`, cursor: selection?.kind === 'commit-files' ? 'pointer' : 'default',
-                  height: 26, padding: '0 10px', borderRadius: T.pill, fontSize: 11, color: T.muted,
-                  background: allFilesCollapsed ? T.hover : 'transparent',
+                  appearance: 'none', border: '1px solid transparent', cursor: selection?.kind === 'commit-files' ? 'pointer' : 'default',
+                  height: 26, padding: '0 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 500, font: 'inherit',
+                  color: T.ink2, background: allFilesCollapsed ? T.chip : T.surface,
+                  boxShadow: allFilesCollapsed ? 'none' : T.ring,
                   opacity: selection?.kind === 'commit-files' ? 1 : 0.4,
                 },
               }, allFilesCollapsed ? t('expandAllFiles') : t('collapseAllFiles')),
-              h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: T.pill, background: T.hover, border: `0.5px solid ${T.borderSoft}` } },
+              h('span', { style: { display: 'inline-flex', padding: 2, borderRadius: 8, background: T.chip, boxShadow: `inset 0 0 0 1px ${T.borderSoft}` } },
                 ['unified', 'split'].map(value => h('button', {
                   key: value, type: 'button', onClick: () => setView(value),
                   style: {
-                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 10.5,
-                    height: 22, padding: '0 10px', borderRadius: T.pill,
-                    background: view === value ? T.card : 'transparent',
-                    color: view === value ? T.text : T.muted,
-                    boxShadow: view === value ? T.shadowSoft : 'none',
+                    appearance: 'none', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 11, fontWeight: view === value ? 600 : 500,
+                    height: 22, padding: '0 10px', borderRadius: 6,
+                    background: view === value ? T.surface : 'transparent',
+                    color: view === value ? T.text : T.ink2,
+                    boxShadow: view === value ? T.ring : 'none',
                     transition: `background .18s ${T.ease}, color .18s ${T.ease}`,
                   },
                 }, t(value)))),
@@ -3903,8 +4021,7 @@ window.__ModuleLoader__.load({
             h('div', {
               style: {
                 flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative',
-                borderRadius: T.rLg, background: T.glass, border: `0.5px solid ${T.border}`,
-                boxShadow: T.shadowSoft, backdropFilter: 'blur(24px) saturate(160%)', overflow: 'hidden',
+                borderRadius: T.rMd, background: T.surface, boxShadow: T.edge, overflow: 'hidden',
               },
               onMouseUp: captureQuote,
               ref: rightCardRef,
@@ -4005,19 +4122,19 @@ window.__ModuleLoader__.load({
                     ? h(CommitFilesView, { state: commitPatch, view, wrap, t, collapseMode: allFilesCollapsed, context: { repoPath: selection.repoPath ?? active?.path, hash: selection.hash } })
                   : h(FilePreview, { state: { ...preview, data: preview.data ? { ...preview.data, repoPath: selection.repoPath ?? active?.path } : null }, selection, t })
               : h('div', {
-                  style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: 28, textAlign: 'center' },
+                  style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 28, textAlign: 'center' },
                 },
                   h('div', {
                     style: {
                       display: 'flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56,
-                      borderRadius: '50%', background: T.hover, border: `0.5px solid ${T.border}`, color: T.muted,
+                      borderRadius: 16, background: T.surfaceAlt, boxShadow: T.ring, color: T.muted,
                     },
                   },
-                    h('svg', { width: 32, height: 32, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                    h('svg', { width: 28, height: 28, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' },
                       h('path', { d: 'M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z' }),
                       h('path', { d: 'M9 8h6M9 12h6M9 16h4' }))),
-                  h('div', { style: { fontFamily: T.serif, fontSize: 18, lineHeight: '26px', fontWeight: 500, color: T.ink2, letterSpacing: '0.01em' } }, t('emptyDiff')),
-                  h('div', { style: { fontSize: 12.5, color: T.muted, maxWidth: 340, lineHeight: '20px' } }, t('emptyDiffHint')))))),
+                  h('div', { style: { fontSize: 15, lineHeight: '22px', fontWeight: 600, color: T.text } }, t('emptyDiff')),
+                  h('div', { style: { fontSize: 12, color: T.muted, maxWidth: 320, lineHeight: '20px' } }, t('emptyDiffHint')))))),
 
         h(Dialog, { dialog, onClose: () => setDialog(null) }),
         h(FileHistoryDialog, {
