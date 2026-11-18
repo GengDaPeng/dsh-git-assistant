@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
         let timer = null
         const listener = () => {
           if (timer) return
-          timer = setTimeout(() => { timer = null; handlerRef.current?.() }, 250)
+          timer = setTimeout(() => { timer = null; handlerRef.current?.() }, 700)
         }
         source.addEventListener('change', listener)
         return () => {
@@ -217,6 +217,13 @@ window.__ModuleLoader__.load({
         diffHunkCollapsed: '这个 hunk 有 {count} 行，点击展开',
         unchangedLines: '{count} 行未变更，点击展开',
         dirtyCount: '{count} 个文件有改动',
+        moreFileActions: '更多操作', fileHistory: '文件历史', fileHistoryEmpty: '这个文件还没有提交记录',
+        stashPush: '暂存到 stash', stashPop: '恢复到工作区', stashList: 'stash 列表', stashEmpty: '没有 stash',
+        stashPushed: '已暂存到 stash', stashPopped: '已恢复 stash', stashChip: '查看 stash',
+        commentPlaceholder: '写下评论，Ctrl/⌘ + Enter 发送', commentSend: '发送评论', commentSending: '发送中…',
+        commentEmpty: '评论不能为空', commentDone: '评论已发送',
+        closeIssue: '关闭议题', reopenIssue: '重新打开', issueClosedOk: '议题已关闭', issueReopenedOk: '议题已重新打开',
+        issueStateOpen: '开启', issueStateClosed: '已关闭',
       },
       en: {
         label: 'Git', title: 'Git Workbench',
@@ -299,6 +306,13 @@ window.__ModuleLoader__.load({
         diffHunkCollapsed: 'This hunk has {count} lines — click to expand',
         unchangedLines: '{count} unchanged lines — click to expand',
         dirtyCount: '{count} changed files',
+        moreFileActions: 'More actions', fileHistory: 'File history', fileHistoryEmpty: 'No commits touch this file yet',
+        stashPush: 'Stash changes', stashPop: 'Pop stash', stashList: 'Stashes', stashEmpty: 'No stash entries',
+        stashPushed: 'Changes stashed', stashPopped: 'Stash restored', stashChip: 'View stashes',
+        commentPlaceholder: 'Write a comment (Ctrl/⌘ + Enter to send)', commentSend: 'Comment', commentSending: 'Sending…',
+        commentEmpty: 'Comment is empty', commentDone: 'Comment posted',
+        closeIssue: 'Close issue', reopenIssue: 'Reopen', issueClosedOk: 'Issue closed', issueReopenedOk: 'Issue reopened',
+        issueStateOpen: 'Open', issueStateClosed: 'Closed',
       },
     }
 
@@ -755,10 +769,16 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState({ phase: 'idle', items: [] })
       const [version, setVersion] = useState(0)
       const path = repository?.path
+      const previousPathRef = useRef(path)
       useEffect(() => {
-        if (!path) { setState({ phase: 'idle', items: [] }); return undefined }
+        if (!path) { previousPathRef.current = path; setState({ phase: 'idle', items: [] }); return undefined }
         let live = true
-        setState(previous => ({ ...previous, phase: 'loading' }))
+        if (previousPathRef.current !== path) {
+          previousPathRef.current = path
+          setState({ phase: 'loading', items: [] })
+        } else {
+          setState(previous => ({ ...previous, phase: 'loading' }))
+        }
         api('/worktrees', { path })
           .then(data => { if (live) setState({ phase: 'ready', items: Array.isArray(data?.worktrees) ? data.worktrees : [] }) })
           .catch(() => { if (live) setState({ phase: 'error', items: [] }) })
@@ -777,19 +797,68 @@ window.__ModuleLoader__.load({
     }
 
     /** One worktree is one complete operable area: header, commit box, staged/changed lists. */
-    function WorktreeCard({ t, item, defaultOpen, onOpen, onNotify, selectedPath, onChanged, onSelect, onDiscardAll, visible = true }) {
+    function copyToClipboard(text) {
+      try {
+        if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+          return Promise.reject(new Error('clipboard unavailable'))
+        }
+        return navigator.clipboard.writeText(text)
+      } catch (error) {
+        return Promise.reject(error)
+      }
+    }
+
+    /** Small fixed-position menu anchored at viewport coordinates; escapes card overflow clipping. */
+    function FloatingMenu({ at, width = 250, onClose, children }) {
+      const ref = useRef(null)
+      useEffect(() => {
+        const close = event => { if (ref.current && !ref.current.contains(event.target)) onClose?.() }
+        const timer = setTimeout(() => document.addEventListener('pointerdown', close, true))
+        return () => { clearTimeout(timer); document.removeEventListener('pointerdown', close, true) }
+      }, [])
+      const left = Math.max(8, Math.min(at.x, (window.innerWidth || 1280) - width - 8))
+      const top = Math.min(at.y, Math.max(8, (window.innerHeight || 800) - 260))
+      return h('div', {
+        ref,
+        style: {
+          position: 'fixed', left, top, zIndex: 120, width, padding: 5, maxHeight: 320, overflowY: 'auto',
+          background: T.menu, border: `0.5px solid ${T.border}`, borderRadius: T.rMd,
+          boxShadow: T.shadowProminent, backdropFilter: 'blur(24px) saturate(170%)',
+        },
+      }, children)
+    }
+
+    function MenuItem({ icon, label, onClick, danger }) {
+      return h('button', {
+        type: 'button', onClick,
+        style: {
+          appearance: 'none', border: 'none', background: 'transparent', color: danger ? T.error : T.ink2,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+          padding: '6px 9px', borderRadius: T.rSm, font: 'inherit', fontSize: 12,
+        },
+        onMouseEnter: event => { event.currentTarget.style.background = T.hover; event.currentTarget.style.color = danger ? T.error : T.text },
+        onMouseLeave: event => { event.currentTarget.style.background = 'transparent'; event.currentTarget.style.color = danger ? T.error : T.ink2 },
+      }, icon ? h('span', { style: { display: 'inline-flex', opacity: 0.7, flex: '0 0 auto' } }, icon) : null, label)
+    }
+
+    /** One worktree is one complete operable area: header, commit box, stash, staged/changed lists. */
+    function WorktreeCard({ t, item, defaultOpen, onOpen, onNotify, selectedPath, onChanged, onSelect, onDiscardAll, onFileHistory, visible = true }) {
       const [open, setOpen] = useState(defaultOpen)
       const [status, refreshStatus] = useStatusAt(item.path, open && visible)
       const [busy, setBusy] = useState(false)
       const [pendingStage, setPendingStage] = useState(() => new Map())
-      const [expanded, setExpanded] = useState(true)
       const [expandedDirs, setExpandedDirs] = useState(() => new Set())
       const [collapsedSections, setCollapsedSections] = useState(() => new Set())
       const [hoveredKey, setHoveredKey] = useState(undefined)
+      const [stashes, setStashes] = useState({ phase: 'idle', items: [] })
+      const [stashMenu, setStashMenu] = useState(null)
+      const [rowMenu, setRowMenu] = useState(null)
       const messageRef = useRef(null)
       const data = status.data
       const behind = status.data?.behind ?? item.behind ?? 0
       const needsSync = behind > 0
+      const displayName = item.name ?? item.path.replace(/\/+$/, '').split('/').pop()
+      const branchLabel = item.branch ?? t('detached')
       let stagedFiles = data?.staged ?? []
       let changeFiles = [...(data?.unstaged ?? []), ...(data?.untracked ?? [])]
       if (pendingStage.size > 0) {
@@ -811,6 +880,14 @@ window.__ModuleLoader__.load({
       const changeTree = useMemo(() => fileRows(changeFiles), [data, pendingStage])
       const stagedStatus = useMemo(() => new Map(stagedFiles.map(file => [file.path, file.status])), [data, pendingStage])
       const changeStatus = useMemo(() => new Map(changeFiles.map(file => [file.path, file.status])), [data, pendingStage])
+      const loadStashes = useCallback(() => {
+        let live = true
+        api('/stashes', { path: item.path })
+          .then(result => { if (live) setStashes({ phase: 'ready', items: Array.isArray(result?.stashes) ? result.stashes : [] }) })
+          .catch(error => { if (live) setStashes({ phase: 'error', items: [], error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [item.path])
+      useEffect(() => { if (open && visible) return loadStashes(); return undefined }, [open, visible, loadStashes])
       const toggleSection = name => setCollapsedSections(previous => {
         const next = new Set(previous)
         if (next.has(name)) next.delete(name)
@@ -865,42 +942,89 @@ window.__ModuleLoader__.load({
           onNotify?.(t('committed'))
         })
       }
-      const row = (file, staged, index) => h('div', {
-        key: `${staged ? 's' : 'w'}:${file.path}:${index}`,
-        title: file.path,
-        onClick: () => onOpen(staged ? { ...file, __staged: true } : file, item.path),
-        style: {
-          display: 'flex', alignItems: 'center', gap: 6, minHeight: 21, padding: '1px 8px 1px 22px',
-          cursor: 'pointer', borderRadius: T.rSm,
-          background: selectedPath === file.path && !staged ? T.selected : 'transparent',
-        },
-        onMouseEnter: event => { event.currentTarget.style.background = T.hover },
-        onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
-      },
-        h('span', { style: { flex: 1, minWidth: 0, fontSize: 12, color: T.ink2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
-          file.oldPath ? `${file.path} ← ${file.oldPath}` : file.path),
-        h(IconAction, {
-          label: staged ? t('unstage') : t('stage'),
-          disabled: busy,
-          onClick: event => { event.stopPropagation(); runAction(() => apiPost(staged ? '/unstage' : '/stage', { path: item.path, files: [file.path] })) },
-        }, staged ? h(IconMinus) : h(IconPlus)),
-        h('span', { style: { width: 14, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: STATUS_COLOR[file.status] ?? T.subtle } }, file.status ?? ''))
-      return h('div', {
+      const stashPushChanges = () => runAction(async () => {
+        await apiPost('/stash-push', { path: item.path })
+        loadStashes()
+        onChanged?.()
+        onNotify?.(t('stashPushed'))
+      })
+      const stashPopAt = index => runAction(async () => {
+        const result = await apiPost('/stash-pop', { path: item.path, index })
+        setStashes({ phase: 'ready', items: Array.isArray(result?.stashes) ? result.stashes : [] })
+        setStashMenu(null)
+        onChanged?.()
+        onNotify?.(t('stashPopped'))
+      })
+      const copyPathOf = file => {
+        copyToClipboard(file.path)
+          .then(() => onNotify?.(t('copiedPath')))
+          .catch(() => onNotify?.(t('actionFailed'), 'error'))
+      }
+      const fileCommand = (route, file) => apiPost(route, { path: item.path, file: file.path })
+        .catch(error => onNotify?.(String(error?.message ?? error), 'error'))
+      const openRowMenu = (file, staged, event) => {
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        setRowMenu({ x: rect.left, y: rect.bottom + 4, file, staged })
+      }
+      const rowMenuItems = rowMenu ? [
+        h(MenuItem, { key: 'copy', icon: h(IconCopy), label: t('copyPath'), onClick: () => { copyPathOf(rowMenu.file); setRowMenu(null) } }),
+        h(MenuItem, { key: 'reveal', icon: h(IconFolder), label: t('revealInFinder'), onClick: () => { fileCommand('/reveal', rowMenu.file); setRowMenu(null) } }),
+        h(MenuItem, { key: 'open', icon: h(IconExternal), label: t('openDefaultApp'), onClick: () => { fileCommand('/open', rowMenu.file); setRowMenu(null) } }),
+        h(MenuItem, { key: 'history', icon: h(IconHistory), label: t('fileHistory'), onClick: () => { onFileHistory?.(rowMenu.file, item.path); setRowMenu(null) } }),
+      ] : null
+      const rowMenuElement = rowMenu
+        ? h(FloatingMenu, { key: 'row-menu', at: rowMenu, width: 230, onClose: () => setRowMenu(null) }, rowMenuItems)
+        : null
+      const stashMenuElement = stashMenu
+        ? h(FloatingMenu, { key: 'stash-menu', at: stashMenu, width: 320, onClose: () => setStashMenu(null) },
+            h('div', { style: { padding: '6px 9px 3px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.muted } }, t('stashList')),
+            stashes.phase === 'loading'
+              ? h('div', { style: { padding: '6px 10px', fontSize: 11.5, color: T.muted } }, t('loading'))
+              : stashes.phase === 'error'
+                ? h('div', { style: { padding: '6px 10px', fontSize: 11.5, color: T.error } }, stashes.error)
+                : stashes.items.length === 0
+                  ? h('div', { style: { padding: '6px 10px', fontSize: 11.5, color: T.subtle } }, t('stashEmpty'))
+                  : stashes.items.map(entry => h('div', {
+                      key: entry.selector,
+                      style: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: T.rSm },
+                    },
+                      h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.subtle, flex: '0 0 auto' } }, `@{${entry.index}}`),
+                      h('span', { style: { flex: 1, minWidth: 0, fontSize: 11.5, color: T.ink2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: entry.subject }, entry.subject || '—'),
+                      entry.time ? h('span', { style: { fontSize: 10, color: T.subtle, flex: '0 0 auto' } }, formatRelativeTime(entry.time)) : null,
+                      h(IconAction, { label: t('stashPop'), disabled: busy, onClick: () => stashPopAt(entry.index) }, h(IconUndo)))))
+        : null
+      return [h('div', {
+        key: 'card',
         style: { margin: '6px 8px', borderRadius: T.rMd, border: `0.5px solid ${T.border}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 34%, transparent)', overflow: 'hidden' },
       },
         h('div', {
           onClick: () => { setOpen(value => !value); onSelect?.(item.path) },
-          style: { display: 'flex', alignItems: 'center', gap: 6, minHeight: 28, padding: '0 8px', cursor: 'pointer', borderBottom: open ? `0.5px solid ${T.borderSoft}` : 'none' },
+          style: { display: 'flex', alignItems: 'center', gap: 7, minHeight: 30, padding: '0 8px', cursor: 'pointer', borderBottom: open ? `0.5px solid ${T.borderSoft}` : 'none' },
         },
           h(Chevron, { open, size: 9 }),
-          h('span', { style: { fontSize: 12, fontWeight: 600, color: T.text } }, item.name ?? item.path.split('/').pop()),
-          h('span', { style: { fontSize: 11, color: T.ink2, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 170 } }, item.branch ?? t('detached')),
+          h('span', { style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap' } }, displayName),
+          branchLabel !== displayName ? h('span', { style: { fontSize: 11, color: T.ink2, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 170 } }, branchLabel) : null,
+          h('span', { style: { fontSize: 9.5, color: T.subtle, border: `0.5px solid ${T.border}`, borderRadius: T.pill, padding: '1px 7px', whiteSpace: 'nowrap', flex: '0 0 auto' } }, item.isMain ? t('mainWorktree') : t('worktree')),
           h('span', { style: { flex: 1 } }),
           h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
-          h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshStatus() } }, h(RefreshIcon, {}))),
+          stashes.items.length > 0 ? h('button', {
+            type: 'button', title: t('stashChip'),
+            onClick: event => {
+              event.stopPropagation()
+              const rect = event.currentTarget.getBoundingClientRect()
+              setStashMenu({ x: rect.left, y: rect.bottom + 4 })
+            },
+            style: {
+              appearance: 'none', border: `0.5px solid ${T.border}`, background: 'transparent', color: T.ink2,
+              display: 'inline-flex', alignItems: 'center', gap: 4, height: 20, padding: '0 8px', borderRadius: T.pill,
+              cursor: 'pointer', fontSize: 10.5, fontFamily: MONO,
+            },
+          }, h(IconStash), String(stashes.items.length)) : null,
+          h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshStatus(); loadStashes() } }, h(RefreshIcon, {}))),
         open ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 5, padding: '6px 8px 8px' } },
           h('textarea', {
-            ref: messageRef, rows: 2, placeholder: `${t('commitPlaceholder')} · ${item.branch ?? ''}`,
+            ref: messageRef, rows: 2, placeholder: `${t('commitPlaceholder')} · ${branchLabel}`,
             style: { width: '100%', boxSizing: 'border-box', resize: 'vertical', background: 'transparent', color: 'inherit', border: `0.5px solid ${T.border}`, borderRadius: T.rSm, padding: '5px 8px', fontSize: 12, fontFamily: 'inherit', outline: 'none', lineHeight: '17px' },
             onKeyDown: event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); commit() } },
           }),
@@ -921,22 +1045,24 @@ window.__ModuleLoader__.load({
             onMouseEnter: event => { event.currentTarget.style.background = T.hover },
             onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
           },
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 10.5, fontWeight: 600 } },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 11, fontWeight: 600 } },
               h(Chevron, { open: !collapsedSections.has('staged'), size: 8 }),
               h('span', null, t('staged'))),
             h('span', { style: { flex: 1 } }),
             h('span', { onClick: event => event.stopPropagation(), style: { display: 'inline-flex', alignItems: 'center' } },
               h(IconAction, { label: t('unstageAll'), disabled: busy, onClick: () => optimisticStage(stagedFiles, true) }, h(IconMinus))),
-            h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(stagedFiles.length))) : null,
+            h('span', { style: { fontSize: 11, color: T.subtle } }, String(stagedFiles.length))) : null,
           stagedFiles.length > 0 && !collapsedSections.has('staged')
             ? h(TreeRows, {
                 node: stagedTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
                 onOpen: file => onOpen(file, item.path),
                 selectedKey: selectedPath ? `s:${selectedPath}` : undefined,
-                actionsFor: file => h(IconAction, {
-                  label: t('unstage'), disabled: busy,
-                  onClick: event => { event.stopPropagation(); optimisticStage([file], true) },
-                }, h(IconMinus)),
+                actionsFor: file => h('span', { style: { display: 'inline-flex', gap: 1 } },
+                  h(IconAction, {
+                    label: t('unstage'), disabled: busy,
+                    onClick: event => { event.stopPropagation(); optimisticStage([file], true) },
+                  }, h(IconMinus)),
+                  h(IconAction, { label: t('moreFileActions'), onClick: event => openRowMenu(file, true, event) }, h(IconMore))),
                 statusByPath: stagedStatus, showStatus: true,
                 hoveredKey, onHoverKey: setHoveredKey,
               })
@@ -950,7 +1076,7 @@ window.__ModuleLoader__.load({
             onMouseEnter: event => { event.currentTarget.style.background = T.hover },
             onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
           },
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 10.5, fontWeight: 600 } },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: T.muted, fontSize: 11, fontWeight: 600 } },
               h(Chevron, { open: !collapsedSections.has('changes'), size: 8 }),
               h('span', null, t('changes'))),
             h('span', { style: { flex: 1 } }),
@@ -959,8 +1085,12 @@ window.__ModuleLoader__.load({
                 label: t('discardAll'), danger: true, disabled: busy || changeFiles.length === 0,
                 onClick: () => onDiscardAll?.(changeFiles.map(file => file.path)),
               }, h(IconUndo)),
+              h(IconAction, {
+                label: t('stashPush'), disabled: busy,
+                onClick: () => stashPushChanges(),
+              }, h(IconStash)),
               h(IconAction, { label: t('stageAll'), disabled: busy || changeFiles.length === 0, onClick: () => optimisticStage(changeFiles, false) }, h(IconPlus))),
-            h('span', { style: { fontSize: 10.5, color: T.subtle } }, String(changeFiles.length))) : null,
+            h('span', { style: { fontSize: 11, color: T.subtle } }, String(changeFiles.length))) : null,
           changeFiles.length > 0 && !collapsedSections.has('changes')
             ? h(TreeRows, {
                 node: changeTree, depth: 0, expandedDirs, onToggleDir: toggleDir,
@@ -974,18 +1104,19 @@ window.__ModuleLoader__.load({
                   h(IconAction, {
                     label: t('stage'), disabled: busy,
                     onClick: event => { event.stopPropagation(); optimisticStage([file], false) },
-                  }, h(IconPlus))),
+                  }, h(IconPlus)),
+                  h(IconAction, { label: t('moreFileActions'), onClick: event => openRowMenu(file, false, event) }, h(IconMore))),
                 statusByPath: changeStatus, showStatus: true,
                 hoveredKey, onHoverKey: setHoveredKey,
               })
             : null,
           stagedFiles.length === 0 && changeFiles.length === 0
-            ? h('div', { style: { fontSize: 10.5, color: T.subtle, padding: '2px 0 2px 2px' } }, t('cleanTree'))
+            ? h('div', { style: { fontSize: 11, color: T.subtle, padding: '2px 0 2px 2px' } }, t('cleanTree'))
             : null,
           status.phase === 'loading' ? h('div', { style: { fontSize: 10.5, color: T.muted } }, t('loading')) : null,
-          status.phase === 'error' ? h('div', { style: { fontSize: 10.5, color: T.error } }, status.error) : null) : null)
+          status.phase === 'error' ? h('div', { style: { fontSize: 10.5, color: T.error } }, status.error) : null) : null),
+        rowMenuElement, stashMenuElement]
     }
-
     /** Multi-file diff for one commit: file cards with collapse, wrap and per-file diff. */
     function CommitFileDiff({ context, entry, view, wrap, t }) {
       const state = useCommitFileDiff(context, entry.path)
@@ -1217,7 +1348,29 @@ window.__ModuleLoader__.load({
           h('span', { style: { flex: 1 } })))
     }
 
-    function IssueDetailPane({ t, state, onNavigate, onClose, comments }) {
+    function IssueDetailPane({ t, state, onNavigate, onClose, comments, onCommentPost, onToggleState }) {
+      const composerRef = useRef(null)
+      const [sending, setSending] = useState(false)
+      const [toggling, setToggling] = useState(false)
+      const postComment = () => {
+        if (sending) return
+        const body = composerRef.current?.value ?? ''
+        if (!body.trim()) return
+        setSending(true)
+        Promise.resolve(onCommentPost?.(body.trim()))
+          .then(() => { if (composerRef.current) composerRef.current.value = '' })
+          .catch(() => { /* the parent already surfaced the failure */ })
+          .finally(() => setSending(false))
+      }
+      const toggleState = () => {
+        if (toggling) return
+        const issue = state?.data?.issue
+        if (!issue) return
+        setToggling(true)
+        Promise.resolve(onToggleState?.(issue.state === 'closed' ? 'open' : 'closed'))
+          .catch(() => { /* the parent already surfaced the failure */ })
+          .finally(() => setToggling(false))
+      }
       if (!state || state.phase === 'idle') {
         return h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, color: T.muted, textAlign: 'center' } },
           h('div', { style: { fontFamily: T.serif, fontSize: 16, color: T.ink2 } }, t('issueDetailEmpty')))
@@ -1226,12 +1379,17 @@ window.__ModuleLoader__.load({
       if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
       const issue = state.data?.issue
       if (!issue) return null
+      const commentItems = comments?.data?.comments ?? []
       return h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderBottom: `0.5px solid ${T.borderSoft}`, flex: '0 0 auto' } },
           h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted } }, `#${issue.number}`),
-          h('span', { style: { width: 7, height: 7, borderRadius: '50%', background: issueStateColor(issue.state) } }),
-          h('span', { style: { fontSize: 10.5, color: T.muted } }, issue.state),
+          h('span', { style: { fontSize: 10, fontWeight: 600, padding: '1px 8px', lineHeight: '15px', borderRadius: T.pill, whiteSpace: 'nowrap', color: issueStateColor(issue.state), border: `0.5px solid ${issueStateColor(issue.state)}` } },
+            issue.state === 'closed' ? t('issueStateClosed') : t('issueStateOpen')),
           h('span', { style: { flex: 1 } }),
+          onToggleState ? h(SmallButton, {
+            label: toggling ? t('loading') : issue.state === 'closed' ? t('reopenIssue') : t('closeIssue'),
+            onClick: toggleState, disabled: toggling,
+          }) : null,
           issue.url ? h('a', {
             href: issue.url, target: '_blank', rel: 'noreferrer',
             style: { fontSize: 10.5, color: T.accent, textDecoration: 'none' },
@@ -1240,14 +1398,14 @@ window.__ModuleLoader__.load({
             type: 'button', onClick: onClose, title: '×',
             style: { appearance: 'none', border: 'none', background: 'transparent', color: T.muted, cursor: 'pointer', fontSize: 15, padding: '0 4px' },
           }, '×')),
-        h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 12px 16px', display: 'flex', flexDirection: 'column', gap: 9 } },
+        h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 12px 14px', display: 'flex', flexDirection: 'column', gap: 10 } },
           h('div', { style: { fontSize: 15, lineHeight: '22px', fontWeight: 600, color: T.text } }, issue.title),
           h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } },
             ...(issue.labels ?? []).map(label => h('span', {
               key: label.name,
               style: { fontSize: 10, padding: '0 7px', lineHeight: '17px', borderRadius: T.pill, whiteSpace: 'nowrap', ...labelChipStyle(label.color) },
             }, label.name))),
-          h('div', { style: { display: 'flex', gap: 12, fontSize: 10.5, color: T.subtle, flexWrap: 'wrap' } },
+          h('div', { style: { display: 'flex', gap: 12, fontSize: 11, color: T.subtle, flexWrap: 'wrap' } },
             h('span', null, `${issue.comments ?? 0} ${t('issueComments')}`),
             issue.updatedAt ? h('span', null, `${t('issueUpdated')} ${formatRelativeTime(Math.floor(new Date(issue.updatedAt).getTime() / 1000))}`) : null,
             issue.author ? h('span', null, `@${issue.author}`) : null),
@@ -1266,27 +1424,49 @@ window.__ModuleLoader__.load({
                 }, `${t('issueChildren')}: #${child.number} ${child.title ?? ''}`)))
             : null,
           issue.body
-            ? h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 9 } }, h(MarkdownBody, { text: issue.body }))
+            ? h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 10 } }, h(MarkdownBody, { text: issue.body }))
             : null,
-          h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 9, display: 'flex', flexDirection: 'column', gap: 7 } },
-            h('div', { style: { fontSize: 10.5, color: T.muted, fontWeight: 600 } }, `${issue.comments ?? 0} ${t('issueComments')}`),
+          h('div', { style: { borderTop: `0.5px solid ${T.borderSoft}`, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 } },
+            h('div', { style: { fontSize: 11, fontWeight: 600, color: T.muted, letterSpacing: '0.02em' } }, `${issue.comments ?? 0} ${t('issueComments')}`),
             comments?.phase === 'loading'
               ? h('div', { style: { fontSize: 11, color: T.muted } }, t('loading'))
               : comments?.phase === 'error'
                 ? h('div', { style: { fontSize: 11, color: T.error } }, comments.error)
-                : (comments?.data?.comments ?? []).length === 0
+                : commentItems.length === 0
                   ? h('div', { style: { fontSize: 11, color: T.subtle } }, t('issueNoComments'))
-                  : (comments.data.comments).map(comment => h('div', {
+                  : commentItems.map(comment => h('div', {
                       key: comment.id,
                       style: {
-                        border: `0.5px solid ${T.borderSoft}`, borderRadius: T.rSm, padding: '7px 9px',
+                        border: `0.5px solid ${T.borderSoft}`, borderRadius: T.rSm, padding: '8px 10px',
                         background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 30%, transparent)',
+                        display: 'flex', flexDirection: 'column', gap: 5,
                       },
                     },
-                      h('div', { style: { display: 'flex', gap: 8, fontSize: 10.5, color: T.subtle, marginBottom: 3 } },
-                        h('span', null, comment.author ? `@${comment.author}` : ''),
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: T.subtle } },
+                        h('span', {
+                          title: comment.author,
+                          style: {
+                            width: 18, height: 18, borderRadius: '50%', flex: '0 0 auto', display: 'inline-flex',
+                            alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700,
+                            background: 'color-mix(in srgb, var(--dsw-alias-brand-primary, #7aa2ff) 22%, transparent)',
+                            color: T.ink2,
+                          },
+                        }, (comment.author || '?').slice(0, 1).toUpperCase()),
+                        h('span', { style: { fontWeight: 600, color: T.ink2 } }, comment.author ? `@${comment.author}` : ''),
                         comment.createdAt ? h('span', null, formatRelativeTime(Math.floor(new Date(comment.createdAt).getTime() / 1000))) : null),
-                      h(MarkdownBody, { text: comment.body }))))))
+                      h(MarkdownBody, { text: comment.body }))),
+            onCommentPost ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 9px', borderRadius: T.rSm, border: `0.5px solid ${T.borderSoft}`, background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1, currentColor) 26%, transparent)' } },
+              h('textarea', {
+                ref: composerRef, rows: 2, placeholder: t('commentPlaceholder'),
+                style: {
+                  width: '100%', boxSizing: 'border-box', resize: 'vertical', background: 'transparent', color: 'inherit',
+                  border: 'none', outline: 'none', fontSize: 12, fontFamily: 'inherit', lineHeight: '17px', padding: 0,
+                },
+                onKeyDown: event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); postComment() } },
+              }),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                h('span', { style: { flex: 1, fontSize: 10, color: T.subtle } }, '⌘/Ctrl + Enter'),
+                h(SmallButton, { label: sending ? t('commentSending') : t('commentSend'), onClick: postComment, disabled: sending }))) : null)))
     }
 
     function IssuesPane({ t, state, selectedNumber, onSelect, search, onSearch, stateFilter, onStateFilter, onRefresh, onLoadMore }) {
@@ -2270,33 +2450,33 @@ window.__ModuleLoader__.load({
       return state
     }
 
-    function useIssueDetail(repository, number) {
+    function useIssueDetail(repository, number, version = 0) {
       const [state, setState] = useState({ phase: 'idle', data: null, error: null })
       const path = repository?.path
       useEffect(() => {
         if (!path || !number) { setState({ phase: 'idle', data: null, error: null }); return undefined }
         let live = true
         setState({ phase: 'loading', data: null, error: null })
-        api('/issue', { path, number })
+        api('/issue', { path, number, refresh: version > 0 ? '1' : '' })
           .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
           .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
         return () => { live = false }
-      }, [path, number])
+      }, [path, number, version])
       return state
     }
 
-    function useIssueComments(repository, number) {
+    function useIssueComments(repository, number, version = 0) {
       const [state, setState] = useState({ phase: 'idle', data: null, error: null })
       const path = repository?.path
       useEffect(() => {
         if (!path || !number) { setState({ phase: 'idle', data: null, error: null }); return undefined }
         let live = true
         setState({ phase: 'loading', data: null, error: null })
-        api('/issue-comments', { path, number })
+        api('/issue-comments', { path, number, refresh: version > 0 ? '1' : '' })
           .then(data => { if (live) setState({ phase: 'ready', data, error: null }) })
           .catch(error => { if (live) setState({ phase: 'error', data: null, error: String(error?.message ?? error) }) })
         return () => { live = false }
-      }, [path, number])
+      }, [path, number, version])
       return state
     }
 
@@ -2398,6 +2578,12 @@ window.__ModuleLoader__.load({
     const IconUndo = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M9 14L4 9l5-5' }), h('path', { d: 'M4 9h9a6 6 0 1 1 0 12H8' }))
     const IconDiff = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }), h('path', { d: 'M12 4v16M7 8h2M7 12h2M15 8h2M15 12h2M15 16h2' }))
     const IconMinus = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' }, h('path', { d: 'M5 12h14' }))
+    const IconStash = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M4 8l2-4h12l2 4' }), h('path', { d: 'M4 8v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8' }), h('path', { d: 'M12 8v6' }), h('path', { d: 'M9.5 11.5L12 14l2.5-2.5' }))
+    const IconCopy = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('rect', { x: 9, y: 9, width: 11, height: 12, rx: 2 }), h('path', { d: 'M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1' }))
+    const IconFolder = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M3 7a1 1 0 0 1 1-1h5l2 2.5h8a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z' }))
+    const IconExternal = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M14 4h6v6' }), h('path', { d: 'M20 4L11 13' }), h('path', { d: 'M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5' }))
+    const IconHistory = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M3.5 12a8.5 8.5 0 1 0 2.5-6' }), h('path', { d: 'M3 4v4h4' }), h('path', { d: 'M12 8v4.5l3 2' }))
+    const IconMore = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'currentColor', stroke: 'none' }, h('circle', { cx: 5, cy: 12, r: 1.7 }), h('circle', { cx: 12, cy: 12, r: 1.7 }), h('circle', { cx: 19, cy: 12, r: 1.7 }))
 
     function SmallButton({ label, onClick, disabled, title }) {
       return h('button', {
@@ -2849,6 +3035,64 @@ window.__ModuleLoader__.load({
             }, dialog.confirmLabel))))
     }
 
+    /** File-history overlay: commits touching one file, click to open that commit's diff. */
+    function FileHistoryDialog({ history, t, onClose, onOpenCommit }) {
+      const [state, setState] = useState({ phase: 'loading', commits: [], error: null })
+      const path = history?.path
+      const file = history?.file
+      useEffect(() => {
+        if (!path || !file) return undefined
+        let live = true
+        setState({ phase: 'loading', commits: [], error: null })
+        api('/file-log', { path, file, limit: 40 })
+          .then(data => { if (live) setState({ phase: 'ready', commits: Array.isArray(data?.commits) ? data.commits : [], error: null }) })
+          .catch(error => { if (live) setState({ phase: 'error', commits: [], error: String(error?.message ?? error) }) })
+        return () => { live = false }
+      }, [path, file])
+      if (!history) return null
+      return h('div', {
+        style: {
+          position: 'fixed', inset: 0, zIndex: 100, background: 'color-mix(in srgb, #000 32%, transparent)',
+          backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+        },
+        onPointerDown: event => { if (event.target === event.currentTarget) onClose() },
+      },
+        h('div', {
+          style: {
+            width: 460, maxWidth: '100%', maxHeight: '80vh', background: T.menu, border: `0.5px solid ${T.border}`,
+            borderRadius: T.rXl, padding: 18, boxShadow: T.shadowProminent,
+            backdropFilter: 'blur(28px) saturate(170%)', display: 'flex', flexDirection: 'column', gap: 10,
+          },
+        },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            h('span', { style: { display: 'inline-flex', opacity: 0.65 } }, h(IconHistory)),
+            h('span', { style: { fontSize: 13, fontWeight: 600 } }, t('fileHistory')),
+            h('span', { style: { flex: 1 } }),
+            h('button', {
+              type: 'button', onClick: onClose,
+              style: { appearance: 'none', border: 'none', background: 'transparent', color: T.muted, cursor: 'pointer', fontSize: 14, padding: '0 4px' },
+            }, '×')),
+          h('div', { style: { fontSize: 11.5, fontFamily: MONO, color: T.ink2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingBottom: 4, borderBottom: `0.5px solid ${T.borderSoft}` } }, file),
+          h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 } },
+            state.phase === 'loading' ? h('div', { style: { padding: '10px 2px', fontSize: 12, color: T.muted } }, t('loading'))
+              : state.phase === 'error' ? h('div', { style: { padding: '10px 2px', fontSize: 12, color: T.error } }, state.error)
+              : state.commits.length === 0 ? h('div', { style: { padding: '10px 2px', fontSize: 12, color: T.subtle } }, t('fileHistoryEmpty'))
+              : state.commits.map(commit => h('button', {
+                  key: commit.oid, type: 'button',
+                  onClick: () => { onOpenCommit?.(commit); onClose?.() },
+                  style: {
+                    appearance: 'none', border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', padding: '6px 8px',
+                    borderRadius: T.rSm, font: 'inherit',
+                  },
+                  onMouseEnter: event => { event.currentTarget.style.background = T.hover },
+                  onMouseLeave: event => { event.currentTarget.style.background = 'transparent' },
+                },
+                  h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.accent, flex: '0 0 auto' } }, commit.oid.slice(0, 7)),
+                  h('span', { style: { flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, commit.subject || '(no message)'),
+                  commit.time ? h('span', { style: { fontSize: 10.5, color: T.subtle, flex: '0 0 auto' } }, formatRelativeTime(commit.time)) : null)))))
+    }
+
     function Toast({ toast }) {
       if (!toast) return null
       return h('div', {
@@ -2933,13 +3177,13 @@ window.__ModuleLoader__.load({
         if (active?.path) refreshStatusPath(active.path)
         bump()
       }, [active?.path, bump]))
-      const groups = useMemo(() => {
-        const grouped = new Map()
+      const repositoryChoices = useMemo(() => {
+        const unique = new Map()
         for (const repository of repositories.items) {
-          if (!grouped.has(repository.repoName)) grouped.set(repository.repoName, [])
-          grouped.get(repository.repoName).push(repository)
+          const current = unique.get(repository.repoName)
+          if (!current || repository.isMain) unique.set(repository.repoName, repository)
         }
-        return [...grouped.entries()]
+        return [...unique.values()]
       }, [repositories.items])
 
       const [status, refreshStatus] = useStatus(active, dataVersion)
@@ -2952,8 +3196,10 @@ window.__ModuleLoader__.load({
       const [localCommits, refreshLocalCommits] = useLocalCommits(active, commitPickerOpen)
       const [commitPatch, refreshCommitPatch] = useCommitPatch(active, selection)
       const issues = useIssues(active, mode === 'issues', issuesState, issuesQuery, issuesLimit, issuesVersion)
-      const issueDetail = useIssueDetail(active, issueNumber)
-      const issueComments = useIssueComments(active, issueNumber)
+      const [issueNonce, bumpIssueNonce] = useState(0)
+      const issueDetail = useIssueDetail(active, issueNumber, issueNonce)
+      const issueComments = useIssueComments(active, issueNumber, issueNonce)
+      const [fileHistory, setFileHistory] = useState(null)
       useEffect(() => {
         if (!issues.stale) return undefined
         const timer = setTimeout(() => setIssuesVersion(value => value + 1), 1200)
@@ -3012,6 +3258,30 @@ window.__ModuleLoader__.load({
       }, [toast])
 
       const notify = useCallback((text, kind = 'info') => setToast({ text, kind }), [])
+      const postIssueComment = useCallback(async body => {
+        if (!active?.path || !issueNumber) throw new Error('no issue selected')
+        try {
+          await apiPost('/issue-comment', { path: active.path, number: issueNumber, body })
+          notify(t('commentDone'))
+        } catch (error) {
+          notify(String(error?.message ?? error), 'error')
+          throw error
+        }
+        bumpIssueNonce(value => value + 1)
+        setIssuesVersion(value => value + 1)
+      }, [active?.path, issueNumber, notify, t])
+      const toggleIssueState = useCallback(async state => {
+        if (!active?.path || !issueNumber) throw new Error('no issue selected')
+        try {
+          await apiPost('/issue-state', { path: active.path, number: issueNumber, state })
+          notify(state === 'closed' ? t('issueClosedOk') : t('issueReopenedOk'))
+        } catch (error) {
+          notify(String(error?.message ?? error), 'error')
+          throw error
+        }
+        bumpIssueNonce(value => value + 1)
+        setIssuesVersion(value => value + 1)
+      }, [active?.path, issueNumber, notify, t])
 
       const stagedFiles = useMemo(() => (status.data?.staged ?? []).map(entry => ({ ...entry, __staged: true })), [status.data])
       const changeFiles = useMemo(() => [
@@ -3098,6 +3368,7 @@ window.__ModuleLoader__.load({
           onDiscardAll: paths => discardPaths(paths),
           onSelect: path => setGraphPath(path),
           onOpen: (file, repoPath) => { setGraphPath(repoPath); setSelection({ kind: 'diff', path: file.path, staged: Boolean(file.__staged), repoPath }) },
+          onFileHistory: (file, repoPath) => setFileHistory({ path: repoPath, file: file.path, phase: 'loading', commits: [], error: null }),
         })))
       const openAll = useCallback(staged => { setSelection({ kind: 'all', staged: Boolean(staged) }) }, [])
       const discardAll = useCallback(() => discardPaths(changeFiles.map(file => file.path)), [discardPaths, changeFiles])
@@ -3376,40 +3647,33 @@ window.__ModuleLoader__.load({
             },
               h('span', { style: { fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
                 active ? active.repoName : t('noRepos')),
-              active ? h('span', { style: { fontFamily: MONO, fontSize: 11, opacity: 0.55, whiteSpace: 'nowrap' } },
-                active.branch ?? t('detached')) : null,
               h(Chevron, { open: menuOpen, size: 9 })),
             menuOpen ? h('div', {
               style: {
-                position: 'absolute', top: '100%', left: 0, marginTop: 8, zIndex: 40, width: 420,
+                position: 'absolute', top: '100%', left: 0, marginTop: 8, zIndex: 40, width: 320,
                 maxHeight: 460, overflowY: 'auto', background: T.menu, border: `0.5px solid ${T.border}`,
                 borderRadius: T.rLg, padding: 6, boxShadow: T.shadowProminent,
                 backdropFilter: 'blur(28px) saturate(170%)',
               },
-            }, ...groups.flatMap(([repoName, entries]) => [
-              h('div', {
-                key: `group:${repoName}`,
-                style: { padding: '8px 10px 4px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: T.subtle },
-              }, repoName),
-              ...entries.map(repository => h('button', {
-                key: repository.id, type: 'button',
-                onClick: () => { setStoredId(repository.id); setMenuOpen(false) },
-                style: {
-                  appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
-                  display: 'flex', flexDirection: 'column', gap: 1, padding: '6px 10px 6px 20px', borderRadius: T.rSm,
-                  font: 'inherit', color: 'inherit',
-                  background: repository.id === active?.id ? T.selected : 'transparent',
-                },
-                onMouseEnter: event => { if (repository.id !== active?.id) event.currentTarget.style.background = T.hover },
-                onMouseLeave: event => { if (repository.id !== active?.id) event.currentTarget.style.background = 'transparent' },
+            }, ...repositoryChoices.map(repository => h('button', {
+              key: repository.repoName, type: 'button',
+              onClick: () => { setStoredId(repository.id); setMenuOpen(false) },
+              style: {
+                appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', borderRadius: T.rSm,
+                font: 'inherit', color: 'inherit',
+                background: repository.repoName === active?.repoName ? T.selected : 'transparent',
               },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 } },
-                  h('span', { style: { fontSize: 12, fontFamily: MONO, opacity: repository.isMain ? 0.9 : 0.65 } }, repository.branch ?? t('detached')),
-                  h('span', { style: { fontSize: 10, opacity: 0.4, border: `1px solid ${T.border}`, borderRadius: 4, padding: '0 4px' } },
-                    repository.isMain ? t('mainWorktree') : t('worktree'))),
-                h('span', {
-                  style: { fontSize: 10.5, fontFamily: MONO, opacity: 0.34, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                }, repository.path)))])) : null),
+              onMouseEnter: event => { if (repository.repoName !== active?.repoName) event.currentTarget.style.background = T.hover },
+              onMouseLeave: event => { if (repository.repoName !== active?.repoName) event.currentTarget.style.background = 'transparent' },
+            },
+              h('span', {
+                title: repository.path,
+                style: { flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+              }, repository.repoName),
+              repository.repoName === active?.repoName
+                ? h('span', { style: { fontSize: 11, color: T.accent } }, '✓')
+                : null))) : null),
 
           // branch chip + menu
           active ? h('div', { ref: branchRef, style: { position: 'relative', minWidth: 0 } },
@@ -3509,6 +3773,8 @@ window.__ModuleLoader__.load({
                 t, state: issueDetail, comments: issueComments,
                 onNavigate: setIssueNumber,
                 onClose: () => setIssueNumber(undefined),
+                onCommentPost: postIssueComment,
+                onToggleState: toggleIssueState,
               })),
           ),
 
@@ -3684,6 +3950,23 @@ window.__ModuleLoader__.load({
                 : h('span', { style: { fontSize: 10.5, opacity: 0.5, border: `1px solid ${T.border}`, borderRadius: 4, padding: '1px 5px', whiteSpace: 'nowrap' } },
                     t('readOnly')),
               h('span', { style: { flex: 1 } }),
+              selection.kind === 'diff' || selection.kind === 'commit-diff'
+                ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 1, flex: '0 0 auto' } },
+                    h(IconAction, {
+                      label: t('copyPath'),
+                      onClick: () => {
+                        copyToClipboard(selection.path)
+                          .then(() => notify(t('copiedPath')))
+                          .catch(() => notify(t('actionFailed'), 'error'))
+                      },
+                    }, h(IconCopy)),
+                    h(IconAction, { label: t('revealInFinder'), onClick: () => { apiPost('/reveal', { path: selection.repoPath ?? active?.path, file: selection.path }).catch(() => {}) } }, h(IconFolder)),
+                    h(IconAction, { label: t('openDefaultApp'), onClick: () => { apiPost('/open', { path: selection.repoPath ?? active?.path, file: selection.path }).catch(() => {}) } }, h(IconExternal)),
+                    h(IconAction, {
+                      label: t('fileHistory'),
+                      onClick: () => setFileHistory({ path: selection.repoPath ?? active?.path, file: selection.path }),
+                    }, h(IconHistory)))
+                : null,
               selection.kind !== 'file'
                 ? h('span', { style: { display: 'inline-flex', gap: 7, fontSize: 11, fontFamily: MONO, whiteSpace: 'nowrap' } },
                     (() => {
@@ -3737,6 +4020,16 @@ window.__ModuleLoader__.load({
                   h('div', { style: { fontSize: 12.5, color: T.muted, maxWidth: 340, lineHeight: '20px' } }, t('emptyDiffHint')))))),
 
         h(Dialog, { dialog, onClose: () => setDialog(null) }),
+        h(FileHistoryDialog, {
+          history: fileHistory, t,
+          onClose: () => setFileHistory(null),
+          onOpenCommit: commit => {
+            if (!fileHistory?.path) return
+            setGraphPath(fileHistory.path)
+            setMode('changes')
+            setSelection({ kind: 'commit-diff', repoPath: fileHistory.path, hash: commit.oid, path: fileHistory.file })
+          },
+        }),
         h(Toast, { toast }))
     }
 

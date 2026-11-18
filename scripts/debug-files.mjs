@@ -27,6 +27,8 @@ globalThis.fetch = async url => {
   const payload = href.includes('/repositories') ? { repositories: repos, workspaces: [{ id: 'ws', name: 'ws', path: '/repo' }] }
     : href.includes('/worktrees') ? worktrees
     : href.includes('/status') ? status
+    : href.includes('/file-log') ? { file: 'a.ts', commits: [{ oid: 'abc123', author: 'A', time: 1700000000, subject: 'touched a' }] }
+    : href.includes('/stashes') ? { stashes: [{ index: 0, selector: 'stash@{0}', time: 1700000000, subject: '测试 stash' }] }
     : href.includes('/fs/list') ? (new dom.window.URL(href).searchParams.get('dir') === 'src'
         ? { entries: [{ name: 'b.ts', path: 'src/b.ts', kind: 'file' }], truncated: false }
         : { entries: [{ name: 'src', path: 'src', kind: 'dir' }, { name: 'a.ts', path: 'a.ts', kind: 'file' }, { name: 'icon.svg', path: 'icon.svg', kind: 'file' }], truncated: false })
@@ -45,6 +47,7 @@ globalThis.fetch = async url => {
         { path: 'a.ts', status: 'M', additions: 2, deletions: 1, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'added line', oldNumber: 1, newNumber: 1 }] }] },
         { path: 'src/b.ts', status: 'M', additions: 1, deletions: 0, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'another line', oldNumber: 1, newNumber: 1 }] }] },
       ] }
+    : href.includes('/issue-comment') || href.includes('/issue-state') ? { ok: true }
     : href.includes('/commit-diff') ? { file: 'a.ts', hash: 'abc1234def', files: [{ path: 'a.ts', binary: false, newFile: false, deletedFile: false, additions: 1, deletions: 0, hunks: [{ header: '@@ -1 +1 @@', lines: [{ type: 'add', text: 'added line', oldNumber: 1, newNumber: 1 }] }] }] }
     : href.includes('/commit') ? { commit: { hash: 'abc1234def', author: 'A', email: 'a@x', time: 1700000000, subject: 'merge commit', body: 'detail body' }, files: [{ path: 'a.ts', status: 'M', additions: 3, deletions: 1 }, { path: 'src/b.ts', status: 'M', additions: 1, deletions: 0 }], stats: { files: 2, additions: 4, deletions: 1 } }
     : href.includes('/graph') ? { commits: [
@@ -157,6 +160,43 @@ if (issuesTab) {
   const changesTab = [...document.querySelectorAll('button')].find(button => button.textContent === translate('changesTab'))
   if (changesTab) await act(async () => { changesTab.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
   await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+  const stashPushBtn = [...document.querySelectorAll('button')].find(button => button.title === translate('stashPush'))
+  console.log('STASH PUSH BTN:', Boolean(stashPushBtn))
+  if (stashPushBtn) {
+    await act(async () => { stashPushBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+    console.log('STASH PUSH POSTED:', fetched.some(h => h.includes('/stash-push')))
+  }
+  const stashChip = [...document.querySelectorAll('button')].find(button => button.title === translate('stashChip'))
+  console.log('STASH CHIP:', Boolean(stashChip))
+  if (stashChip) {
+    await act(async () => { stashChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+    console.log('STASH MENU:', document.body.textContent.includes('测试 stash'), '| POP BTN:', [...document.querySelectorAll('button')].some(b => b.title === translate('stashPop')))
+    const popBtn = [...document.querySelectorAll('button')].find(b => b.title === translate('stashPop'))
+    if (popBtn) await act(async () => { popBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+    console.log('STASH POP POSTED:', fetched.some(h => h.includes('/stash-pop')))
+  }
+  const changeRow = [...document.querySelectorAll('div')].find(d => {
+    const text = d.textContent.trim()
+    return (text === 'a.ts' || text === 'a.tsM') && d.style.cursor === 'pointer'
+  })
+  if (changeRow) await act(async () => { changeRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  const rowMenuBtn = [...document.querySelectorAll('button')].find(button => button.title === translate('moreFileActions'))
+  console.log('ROW MENU BTN:', Boolean(rowMenuBtn))
+  if (rowMenuBtn) {
+    await act(async () => { rowMenuBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+    console.log('ROW MENU ITEMS:', document.body.textContent.includes(translate('copyPath')), document.body.textContent.includes(translate('fileHistory')))
+    const historyItem = [...document.querySelectorAll('button')].find(button => button.textContent === translate('fileHistory'))
+    if (historyItem) await act(async () => { historyItem.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+    console.log('FILE HISTORY DIALOG:', document.body.textContent.includes('touched a'), '| FETCHED:', fetched.some(h => h.includes('/file-log')))
+    const closeDialog = [...document.querySelectorAll('button')].find(b => b.textContent === '×')
+    if (closeDialog) await act(async () => { closeDialog.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  }
 }
 console.log('files tab found:', Boolean(tab))
 if (tab) await act(async () => { tab.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
@@ -177,6 +217,34 @@ const imgRow = imgCandidates[imgCandidates.length - 1]
 if (imgRow) await act(async () => { imgRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
 await act(async () => { await new Promise(r => setTimeout(r, 200)) })
 console.log('IMG SRCS:', JSON.stringify([...document.querySelectorAll('img')].map(img => img.getAttribute('src'))))
+
+/* issue write operations: comment composer and close/reopen */
+const issuesTabAgain = [...document.querySelectorAll('button')].find(button => button.textContent === translate('issuesTab'))
+if (issuesTabAgain) {
+  await act(async () => { issuesTabAgain.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 200)) })
+  const cardAgain = [...document.querySelectorAll('[role="button"]')].find(element => element.textContent.includes('#101'))
+  if (cardAgain) await act(async () => { cardAgain.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 200)) })
+  const composer = [...document.querySelectorAll('textarea')].find(ta => ta.placeholder === translate('commentPlaceholder'))
+  console.log('COMMENT COMPOSER:', Boolean(composer))
+  if (composer) {
+    await act(async () => {
+      composer.value = '来自回归脚本的评论'
+      composer.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+    })
+    const sendBtn = [...document.querySelectorAll('button')].find(b => b.textContent === translate('commentSend'))
+    if (sendBtn) await act(async () => { sendBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 300)) })
+    console.log('COMMENT POSTED:', fetched.some(h => h.includes('/issue-comment')))
+  }
+  const closeBtnAfter = [...document.querySelectorAll('button')].find(b => b.textContent === translate('closeIssue'))
+  if (closeBtnAfter) {
+    await act(async () => { closeBtnAfter.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 300)) })
+    console.log('STATE POSTED:', fetched.some(h => h.includes('/issue-state')), '| REOPEN BTN:', [...document.querySelectorAll('button')].some(b => b.textContent === translate('reopenIssue')))
+  }
+}
 
 console.log('BOUNDARY:', (document.getElementById('boundary')?.textContent || 'none').slice(0, 2000))
 console.log('ERRORS:', JSON.stringify(errors.slice(0, 5), null, 1).slice(0, 2500))

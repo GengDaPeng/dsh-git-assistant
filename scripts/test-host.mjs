@@ -113,3 +113,76 @@ test('branch create and switch helpers operate on the checkout', async () => {
     dropRepo(repo)
   }
 })
+
+test('stash push, list and pop round-trip through the host helpers', async () => {
+  const repo = makeRepo()
+  try {
+    appendFileSync(join(repo, 'a.txt'), 'stashed line\n')
+    writeFileSync(join(repo, 'untracked.txt'), 'new file\n')
+    await internals.stashPush(repo, 'host stash note')
+
+    const listed = await internals.stashesOf(repo)
+    assert.equal(listed.stashes.length, 1)
+    assert.equal(listed.stashes[0].index, 0)
+    assert.equal(listed.stashes[0].selector, 'stash@{0}')
+    assert.match(listed.stashes[0].subject, /host stash note/)
+    assert.ok(listed.stashes[0].time > 0)
+    assert.equal(git(repo, ['status', '--porcelain']).trim(), '')
+
+    await internals.stashPop(repo, 0)
+    const afterPop = await internals.stashesOf(repo)
+    assert.equal(afterPop.stashes.length, 0)
+    assert.match(git(repo, ['status', '--porcelain']), /a\.txt/)
+    assert.match(git(repo, ['status', '--porcelain']), /untracked\.txt/)
+  } finally {
+    dropRepo(repo)
+  }
+})
+
+test('stash push reports a friendly error when there is nothing to stash', async () => {
+  const repo = makeRepo()
+  try {
+    await assert.rejects(() => internals.stashPush(repo), /nothing to stash/)
+    assert.equal((await internals.stashesOf(repo)).stashes.length, 0)
+  } finally {
+    dropRepo(repo)
+  }
+})
+
+test('file history lists commits touching one file, newest first', async () => {
+  const repo = makeRepo()
+  try {
+    writeFileSync(join(repo, 'b.txt'), 'one\n')
+    git(repo, ['add', 'b.txt'])
+    git(repo, ['commit', '-qm', 'add b'])
+    appendFileSync(join(repo, 'b.txt'), 'two\n')
+    git(repo, ['add', 'b.txt'])
+    git(repo, ['commit', '-qm', 'touch b'])
+    appendFileSync(join(repo, 'a.txt'), 'only a\n')
+    git(repo, ['add', 'a.txt'])
+    git(repo, ['commit', '-qm', 'only a'])
+
+    const history = await internals.fileHistoryOf(repo, 'b.txt', 40)
+    assert.equal(history.file, 'b.txt')
+    assert.equal(history.commits.length, 2)
+    assert.match(history.commits[0].subject, /touch b/)
+    assert.match(history.commits[1].subject, /add b/)
+    assert.ok(history.commits[0].time >= history.commits[1].time)
+
+    await assert.rejects(() => internals.fileHistoryOf(repo, '../outside.txt', 10))
+  } finally {
+    dropRepo(repo)
+  }
+})
+
+test('issue write helpers validate their inputs and translate gh failures', async () => {
+  const repo = makeRepo()
+  try {
+    git(repo, ['remote', 'add', 'origin', 'git@github.com:example/nope.git'])
+    await assert.rejects(() => internals.issueCommentAdd(repo, 0, 'x'), /invalid issue number|no such issue|404|Not Found/i)
+    await assert.rejects(() => internals.issueCommentAdd(repo, 1, '   '), /comment body is empty/)
+    await assert.rejects(() => internals.issueSetState(repo, 1, 'frozen'), /invalid issue state/)
+  } finally {
+    dropRepo(repo)
+  }
+})

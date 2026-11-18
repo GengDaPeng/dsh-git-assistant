@@ -43,6 +43,13 @@ const GIT_ENV = (() => {
   return env
 })()
 
+const WORKTREES_CACHE_TTL = 30 * 1000
+const worktreesCache = new Map()
+
+function clearWorktreesCache(repoPath) {
+  worktreesCache.delete(repoPath)
+}
+
 const DIFF_CACHE_LIMIT = 300
 const diffCache = new Map()
 const headStamp = { path: undefined, at: 0, sha: '' }
@@ -768,8 +775,11 @@ function streamRepoEvents(target, req, res) {
       } catch { cleanup() }
     }, 180)
   }
+  // Do not watch .git/index: `git status` can refresh it, which would echo back as a change
+  // event and make the client re-read status/diffs in a loop. Index changes are still picked
+  // up by the 5s status fallback, and staging from the UI refreshes explicitly.
   const targets = [
-    join(gitDir, 'index'), join(gitDir, 'HEAD'), join(gitDir, 'packed-refs'),
+    join(gitDir, 'HEAD'), join(gitDir, 'packed-refs'),
     join(gitDir, 'FETCH_HEAD'), join(gitDir, 'ORIG_HEAD'), join(gitDir, 'MERGE_HEAD'),
     join(gitDir, 'refs'), join(gitDir, 'logs', 'refs'),
   ]
@@ -878,6 +888,36 @@ async function issueCommentsOf(repoPath, number) {
       url: comment.html_url ?? '',
     })),
   }
+}
+
+/** Post one comment on an issue through the authenticated gh CLI (REST POST). */
+async function issueCommentAdd(repoPath, number, body) {
+  if (typeof body !== 'string' || !body.trim()) throw new Error('comment body is empty')
+  const repo = await githubRepoOf(repoPath)
+  const result = await runProcess('gh', ['api', `repos/${repo.owner}/${repo.name}/issues/${number}/comments`, '-f', `body=${body}`], { timeout: 30000 })
+  if (result.code !== 0) {
+    throw new Error(`gh issue comment failed: ${(result.stderr || result.stdout || 'gh command failed').trim().split('\n')[0]}`)
+  }
+}
+
+/** Open or close one issue through the authenticated gh CLI. */
+async function issueSetState(repoPath, number, state) {
+  if (state !== 'open' && state !== 'closed') throw new Error('invalid issue state')
+  const repo = await githubRepoOf(repoPath)
+  const result = await runProcess('gh', ['issue', state === 'closed' ? 'close' : 'reopen', String(number), '--repo', `${repo.owner}/${repo.name}`], { timeout: 30000 })
+  if (result.code !== 0) {
+    throw new Error(`gh issue ${state === 'closed' ? 'close' : 'reopen'} failed: ${(result.stderr || result.stdout || 'gh command failed').trim().split('\n')[0]}`)
+  }
+}
+
+/** Apply a local write to the cached board immediately: comment count and state stay honest until the next sync. */
+function touchIssueStore(repoPath, number, patch) {
+  const store = issueStoreOf(repoPath)
+  const issue = store.issues.get(number)
+  if (!issue) return
+  Object.assign(issue, patch)
+  store.checkedAt = Date.now()
+  invalidateIssueEntry(repoPath, number)
 }
 
 async function issueDetailOf(repoPath, number) {
@@ -1026,14 +1066,29 @@ async function graphOf(repoPath, limit, skip, scope) {
   return { commits, hasMore: commits.length >= limit }
 }
 
+async function mapLimit(items, limit, worker) {
+  const results = new Array(items.length)
+  let cursor = 0
+  const runners = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      if (index >= items.length) return
+      results[index] = await worker(items[index], index)
+    }
+  })
+  await Promise.all(runners)
+  return results
+}
+
 async function worktreesOf(repoPath) {
   const list = parseWorktrees(await gitOk(repoPath, ['worktree', 'list', '--porcelain']) ?? '')
-  const worktrees = []
-  for (const worktree of list.slice(0, 40)) {
-    if (worktree.bare) continue
-    const status = parseStatus(await gitOk(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=no']) ?? '')
-    const lastRaw = await gitOk(worktree.path, ['log', '-1', '--format=%at'])
-    worktrees.push({
+    .filter(worktree => !worktree.bare && !worktree.prunable && existsSync(worktree.path))
+    .slice(0, 40)
+  const worktrees = await mapLimit(list, 8, async worktree => {
+    const status = parseStatus(await gitOk(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=no'], { timeout: 2500 }) ?? '')
+    const lastRaw = await gitOk(worktree.path, ['log', '-1', '--format=%at'], { timeout: 2500 })
+    return {
       path: worktree.path,
       branch: status.branch ?? (worktree.detached ? 'detached' : undefined),
       ahead: status.ahead,
@@ -1041,14 +1096,33 @@ async function worktreesOf(repoPath) {
       changes: status.staged.length + status.unstaged.length,
       isMain: resolve(worktree.path) === resolve(repoPath),
       updatedAt: Number(lastRaw?.trim() ?? 0) || 0,
-    })
-  }
+    }
+  })
   worktrees.sort((left, right) => {
     if (left.isMain !== right.isMain) return left.isMain ? -1 : 1
     if ((left.changes > 0) !== (right.changes > 0)) return left.changes > 0 ? -1 : 1
     return right.updatedAt - left.updatedAt
   })
   return { worktrees }
+}
+
+async function cachedWorktreesOf(repoPath) {
+  const hit = worktreesCache.get(repoPath)
+  if (hit) {
+    if (hit.promise) return hit.promise
+    if (Date.now() - hit.at < WORKTREES_CACHE_TTL) return hit.value
+  }
+  const promise = worktreesOf(repoPath)
+    .then(value => {
+      worktreesCache.set(repoPath, { at: Date.now(), value })
+      return value
+    })
+    .catch(error => {
+      worktreesCache.delete(repoPath)
+      throw error
+    })
+  worktreesCache.set(repoPath, { at: 0, value: null, promise })
+  return promise
 }
 
 async function diffOf(repoPath, file, staged) {
@@ -1225,6 +1299,53 @@ async function createBranch(repoPath, name, from) {
   await requireSuccess(repoPath, args)
 }
 
+/* ── stash operations ────────────────────────────────────────────────── */
+
+async function stashesOf(repoPath) {
+  const raw = await gitOk(repoPath, ['stash', 'list', '--format=%gd%x1f%ct%x1f%gs'])
+  const stashes = []
+  for (const line of (raw ?? '').split('\n')) {
+    if (!line.trim()) continue
+    const [selector, timeRaw, subject] = line.split('\x1f')
+    const indexMatch = selector?.match(/stash@\{(\d+)\}/)
+    if (!indexMatch) continue
+    stashes.push({
+      index: Number(indexMatch[1]),
+      selector: selector.trim(),
+      time: Number(timeRaw ?? 0) || 0,
+      subject: (subject ?? '').trim(),
+    })
+  }
+  return { stashes }
+}
+
+async function stashPush(repoPath, message) {
+  const args = ['stash', 'push', '-u']
+  if (typeof message === 'string' && message.trim()) args.push('-m', message.trim())
+  const result = await runGit(repoPath, args)
+  if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'git stash push failed').trim().split('\n')[0])
+  if (/no local changes to save/i.test(result.stdout)) throw new Error('nothing to stash')
+}
+
+async function stashPop(repoPath, index) {
+  const safeIndex = Number.isInteger(index) && index >= 0 && index < 100 ? index : 0
+  const result = await runGit(repoPath, ['stash', 'pop', `stash@{${safeIndex}}`])
+  if (result.code !== 0) throw new Error((result.stderr || result.stdout || 'git stash pop failed').trim().split('\n')[0])
+}
+
+/** Commit history for one file, newest first; --follow keeps renames on a single path. */
+async function fileHistoryOf(repoPath, file, limit = 40) {
+  if (!safeRelativePath(file)) throw new Error('invalid file path')
+  const raw = await gitOk(repoPath, ['log', '--follow', `--max-count=${limit}`, '--pretty=format:%H%x1f%an%x1f%at%x1f%s', '--', file])
+  const commits = []
+  for (const line of (raw ?? '').split('\n')) {
+    if (!line.trim()) continue
+    const [oid, author, timeRaw, subject] = line.split('\x1f')
+    commits.push({ oid, author: author ?? '', time: Number(timeRaw ?? 0), subject: subject ?? '' })
+  }
+  return { file, commits }
+}
+
 /* ── minimal chat bridge (B-route proof) ─────────────────────────────── */
 
 /** Read the durable event log of one Session and reduce it to text messages. */
@@ -1321,7 +1442,7 @@ export function apply(ctx) {
           return
         }
         if (req.method === 'GET' && route === '/ping') {
-          json(res, 200, { ok: true, version: '0.2.0' })
+          json(res, 200, { ok: true, version: '0.3.0' })
           return
         }
         if (req.method === 'GET' && route === '/repositories') {
@@ -1434,6 +1555,25 @@ export function apply(ctx) {
           json(res, 200, await localCommitsOf(target.path, limit))
           return
         }
+        if (req.method === 'GET' && route === '/stashes') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          json(res, 200, await stashesOf(target.path))
+          return
+        }
+        if (req.method === 'GET' && route === '/file-log') {
+          const target = await knownCheckout(ctx, url.searchParams.get('path'))
+          if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
+          const file = url.searchParams.get('file')
+          if (!file) { json(res, 400, { error: 'missing file' }); return }
+          const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 40))
+          try {
+            json(res, 200, await fileHistoryOf(target.path, file, limit))
+          } catch (error) {
+            json(res, 400, { error: String(error?.message ?? error) })
+          }
+          return
+        }
         if (req.method === 'GET' && route === '/commit-patch') {
           const target = await knownCheckout(ctx, url.searchParams.get('path'))
           if (!target) { json(res, 400, { error: 'unknown checkout' }); return }
@@ -1479,7 +1619,7 @@ export function apply(ctx) {
           const path = url.searchParams.get('path')
           const checkout = await knownCheckout(ctx, path)
           if (!checkout) { json(res, 400, { error: 'unknown checkout' }); return }
-          json(res, 200, await worktreesOf(checkout.path))
+          json(res, 200, await cachedWorktreesOf(checkout.path))
           return
         }
         if (req.method === 'GET' && route === '/chat/history') {
@@ -1526,6 +1666,7 @@ export function apply(ctx) {
           if (route === '/sync') {
             await syncWorktree(checkout.path)
             clearDiffCache(checkout.path)
+            clearWorktreesCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
@@ -1568,18 +1709,66 @@ export function apply(ctx) {
             const action = typeof body.action === 'string' ? body.action : (body.amend ? 'amend' : 'commit')
             const result = await commitFiles(checkout.path, message, action)
             clearDiffCache(checkout.path)
+            clearWorktreesCache(checkout.path)
             json(res, 200, { ok: true, ...result })
+            return
+          }
+          if (route === '/stash-push') {
+            await stashPush(checkout.path, body.message)
+            clearDiffCache(checkout.path)
+            clearWorktreesCache(checkout.path)
+            json(res, 200, { ok: true, stashes: (await stashesOf(checkout.path)).stashes })
+            return
+          }
+          if (route === '/stash-pop') {
+            await stashPop(checkout.path, body.index)
+            clearDiffCache(checkout.path)
+            clearWorktreesCache(checkout.path)
+            json(res, 200, { ok: true, stashes: (await stashesOf(checkout.path)).stashes })
+            return
+          }
+          if (route === '/issue-comment') {
+            const number = Number(body.number)
+            if (!Number.isInteger(number) || number <= 0) { json(res, 400, { error: 'invalid issue number' }); return }
+            const text = typeof body.body === 'string' ? body.body : ''
+            if (!text.trim() || text.length > 65000) { json(res, 400, { error: 'invalid comment body' }); return }
+            try {
+              await issueCommentAdd(checkout.path, number, text.trim())
+              touchIssueStore(checkout.path, number, {
+                comments: (issueStoreOf(checkout.path).issues.get(number)?.comments ?? 0) + 1,
+                updatedAt: new Date().toISOString(),
+              })
+              json(res, 200, { ok: true })
+            } catch (error) {
+              json(res, 400, { error: String(error?.message ?? error) })
+            }
+            return
+          }
+          if (route === '/issue-state') {
+            const number = Number(body.number)
+            if (!Number.isInteger(number) || number <= 0) { json(res, 400, { error: 'invalid issue number' }); return }
+            const state = body.state === 'open' || body.state === 'closed' ? body.state : null
+            if (!state) { json(res, 400, { error: 'invalid issue state' }); return }
+            try {
+              await issueSetState(checkout.path, number, state)
+              touchIssueStore(checkout.path, number, { state, updatedAt: new Date().toISOString() })
+              json(res, 200, { ok: true, state })
+            } catch (error) {
+              json(res, 400, { error: String(error?.message ?? error) })
+            }
             return
           }
           if (route === '/switch') {
             await switchBranch(checkout.path, body.branch)
             clearDiffCache(checkout.path)
+            clearWorktreesCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
           if (route === '/branch/create') {
             await createBranch(checkout.path, body.name, body.from)
             clearDiffCache(checkout.path)
+            clearWorktreesCache(checkout.path)
             json(res, 200, { ok: true })
             return
           }
@@ -1603,4 +1792,5 @@ export const internals = {
   diffOf: (repoPath, file, staged) => diffOf(repoPath, file, staged),
   clearDiffCache, diffCacheSize: () => diffCache.size,
   stageFiles, unstageFiles, discardFiles, commitFiles, switchBranch, createBranch,
+  stashesOf, stashPush, stashPop, fileHistoryOf, issueCommentAdd, issueSetState, touchIssueStore,
 }
