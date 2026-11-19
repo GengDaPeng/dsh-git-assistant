@@ -2814,7 +2814,6 @@ window.__ModuleLoader__.load({
             padding: `1px 7px 1px ${7 + depth * 13 + 12}px`,
             cursor: 'pointer', background: active ? T.selected : 'transparent', minWidth: 0,
             borderRadius: 6, transition: `background .12s ${T.ease}`,
-            boxShadow: active ? `inset 2px 0 0 ${T.accent}` : 'none',
           },
           onMouseEnter: event => { if (!active) event.currentTarget.style.background = T.hover; onHoverKey?.(key) },
           onMouseLeave: event => { if (!active) event.currentTarget.style.background = 'transparent'; if (hoveredKey === key) onHoverKey?.(undefined) },
