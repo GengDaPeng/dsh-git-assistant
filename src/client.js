@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
-    const { useCallback, useEffect, useMemo, useRef, useState } = React
+    const { memo, useCallback, useEffect, useMemo, useRef, useState } = React
 
     const NS = 'dshGitAssistant'
     const ID = 'dsh-git-assistant'
@@ -2413,7 +2413,6 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(defaultOpen)
       const [expandedDirs, setExpandedDirs] = useState(() => new Set())
       const [dirs, setDirs] = useState({})
-      const [hoveredKey, setHoveredKey] = useState(undefined)
       const [version, setVersion] = useState(0)
       const [status, refreshStatus] = useStatusAt(item.path, open && visible)
       const statusByPath = useMemo(() => {
@@ -2443,6 +2442,7 @@ window.__ModuleLoader__.load({
         return next
       })
       const rootEntries = dirs['']?.entries ?? []
+      const rows = useMemo(() => {
       const rows = []
       const walk = (dirPath, depth) => {
         const node = dirs[dirPath]
@@ -2471,8 +2471,8 @@ window.__ModuleLoader__.load({
               color: T.ink2,
               fontSize: 12,
             },
-            onMouseEnter: event => { if (!selected) event.currentTarget.style.background = T.hover; setHoveredKey(entry.path) },
-            onMouseLeave: event => { if (!selected) event.currentTarget.style.background = 'transparent'; if (hoveredKey === entry.path) setHoveredKey(undefined) },
+            onMouseEnter: event => { if (!selected) event.currentTarget.style.background = T.hover },
+            onMouseLeave: event => { if (!selected) event.currentTarget.style.background = 'transparent' },
             onContextMenu: event => { event.preventDefault(); event.stopPropagation(); openFileContextMenu({ x: event.clientX, y: event.clientY, items: menuItems(entry, isDir) }) },
           },
             isDir ? h(Chevron, { open: expanded, size: 8 }) : h('span', { style: { width: 8, flex: '0 0 8px' } }),
@@ -2484,6 +2484,8 @@ window.__ModuleLoader__.load({
         if (node.truncated) rows.push(h('div', { key: `${dirPath}:truncated`, style: { fontSize: 10, color: T.subtle, padding: `2px 8px 2px ${10 + depth * 13}px` } }, '…'))
       }
       walk('', 0)
+      return rows
+      }, [dirs, expandedDirs, selectedPath, statusByPath, dirStatusByPath, item.path])
       const menuItems = (entry, isDir) => {
         const root = item.path.replace(/\/$/, '')
         const absolute = `${root}/${entry.path}`
@@ -3114,6 +3116,43 @@ window.__ModuleLoader__.load({
       whiteSpace: 'pre', overflow: 'hidden', textOverflow: 'ellipsis',
     }
 
+    /**
+     * Text preview with incremental rendering, mirroring DiffLines: the first PREVIEW_RENDER_STEP
+     * lines commit immediately (a click therefore shows content at once, even for a 5000-line
+     * file), and further chunks mount as the scroller nears the bottom. The body is memoized so
+     * status polling and hover elsewhere cannot rebuild thousands of rows.
+     */
+    const PREVIEW_RENDER_STEP = 400
+    const PreviewBody = memo(function PreviewBody({ content, path, truncated, t }) {
+      const [visibleCount, setVisibleCount] = useState(PREVIEW_RENDER_STEP)
+      const language = languageOf(path)
+      const lines = useMemo(() => (content ?? '').split('\n').slice(0, MAX_PREVIEW_LINES), [content])
+      useEffect(() => { setVisibleCount(PREVIEW_RENDER_STEP) }, [content, path])
+      const highlight = lines.length <= 3000
+      const visible = visibleCount >= lines.length ? lines : lines.slice(0, visibleCount)
+      return h('div', {
+        onScroll: event => {
+          const element = event.currentTarget
+          if (visibleCount < lines.length && element.scrollHeight - element.scrollTop - element.clientHeight < 600) {
+            setVisibleCount(count => Math.min(lines.length, count + PREVIEW_RENDER_STEP))
+          }
+        },
+        style: { overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: 24 },
+      },
+        visible.map((line, index) => h('div', {
+          key: index,
+          style: { display: 'grid', gridTemplateColumns: '46px minmax(max-content, 1fr)', minHeight: 19 },
+        },
+          h('span', { style: { ...numberStyle, opacity: 0.4 } }, String(index + 1)),
+          h('span', {
+            style: { fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: 'pre', paddingRight: 18 },
+          }, h(CodeText, { text: line, language, highlight, baseColor: 'inherit' })))),
+        visibleCount < lines.length
+          ? h('div', { style: { padding: '8px 16px', fontSize: 11.5, color: T.muted } }, t('moreLines', { shown: visibleCount, total: lines.length }))
+          : null,
+        truncated ? h('div', { style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice')) : null)
+    })
+
     function FilePreview({ state, selection, t }) {
       if (state.phase === 'loading') return h('div', { style: { padding: 18, color: T.muted, fontSize: 12.5 } }, t('loading'))
       if (state.phase === 'error') return h('div', { style: { padding: 18, color: T.error, fontSize: 12.5 } }, state.error)
@@ -3145,19 +3184,10 @@ window.__ModuleLoader__.load({
           h('div', null, t('binary')),
           h('div', { style: { fontFamily: MONO, fontSize: 11, color: T.subtle } }, `${selection.path} · ${typeof data.size === 'number' ? `${(data.size / 1024).toFixed(1)} KB` : ''}`))
       }
-      const language = languageOf(selection.path)
-      const lines = (data.content ?? '').split('\n').slice(0, MAX_PREVIEW_LINES)
-      const highlight = lines.length <= 3000
-      return h('div', { style: { overflow: 'auto', flex: 1, minHeight: 0, paddingBottom: 24 } },
-        lines.map((line, index) => h('div', {
-          key: index,
-          style: { display: 'grid', gridTemplateColumns: '46px minmax(max-content, 1fr)', minHeight: 19 },
-        },
-          h('span', { style: { ...numberStyle, opacity: 0.4 } }, String(index + 1)),
-          h('span', {
-            style: { fontFamily: MONO, fontSize: 11.5, lineHeight: '19px', whiteSpace: 'pre', paddingRight: 18 },
-          }, h(CodeText, { text: line, language, highlight, baseColor: 'inherit' })))),
-        data.truncated ? h('div', { style: { padding: '8px 16px', color: T.muted, fontSize: 11.5 } }, t('truncateNotice')) : null)
+      if (data.binary === false && typeof data.content === 'string') {
+        return h(PreviewBody, { content: data.content, path: selection.path, truncated: Boolean(data.truncated), t })
+      }
+      return null
     }
 
     function AllDiff({ state, view, t, context }) {

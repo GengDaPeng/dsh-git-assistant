@@ -393,7 +393,8 @@ async function knownCheckout(ctx, path) {
 }
 
 async function statusOf(repoPath) {
-  const raw = await gitOk(repoPath, ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '--ignored=no'])
+  // Background polling must never fight the user's own git over the index lock (git's own guidance for read-only probes).
+  const raw = await gitOk(repoPath, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--untracked-files=all', '--ignored=no'])
   if (raw === undefined) throw new Error('not a git checkout')
   const status = parseStatus(raw)
   if (status.untracked.length > MAX_UNTRACKED_ENTRIES) {
@@ -1122,7 +1123,7 @@ async function worktreesOf(repoPath) {
     .filter(worktree => !worktree.bare && !worktree.prunable && existsSync(worktree.path))
     .slice(0, 40)
   const worktrees = await mapLimit(list, 8, async worktree => {
-    const status = parseStatus(await gitOk(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=no'], { timeout: 2500 }) ?? '')
+    const status = parseStatus(await gitOk(worktree.path, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--untracked-files=no'], { timeout: 2500 }) ?? '')
     const lastRaw = await gitOk(worktree.path, ['log', '-1', '--format=%at'], { timeout: 2500 })
     return {
       path: worktree.path,
