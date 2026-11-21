@@ -1150,15 +1150,17 @@ window.__ModuleLoader__.load({
         }),
         h('button', {
           type: 'button', onClick: needsSync ? sync : commit, disabled: busy || (!needsSync && !dirty),
-          onMouseEnter: event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = needsSync ? T.surfaceHover : T.primaryHover },
-          onMouseLeave: event => { event.currentTarget.style.background = needsSync ? T.surface : T.primary },
+          /* Sync is just as much a primary action as commit while the branch is behind: same filled
+             treatment, different verb, so the eye always finds one solid button per card. */
+          onMouseEnter: event => { if (!event.currentTarget.disabled) event.currentTarget.style.background = T.primaryHover },
+          onMouseLeave: event => { event.currentTarget.style.background = T.primary },
           style: {
-            appearance: 'none', border: needsSync ? `1px solid ${T.border}` : '1px solid transparent',
+            appearance: 'none', border: '1px solid transparent',
             borderRadius: 9, height: 30, width: '100%', fontSize: 12, fontWeight: 600,
             font: 'inherit',
-            background: needsSync ? T.surface : T.primary,
-            color: needsSync ? T.text : T.primaryText,
-            boxShadow: needsSync ? 'none' : '0 1px 2px rgba(0,0,0,.14)',
+            background: T.primary,
+            color: T.primaryText,
+            boxShadow: '0 1px 2px rgba(0,0,0,.14)',
             cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.55 : 1,
             transition: `background .15s ${T.ease}, opacity .15s ${T.ease}`,
           },
