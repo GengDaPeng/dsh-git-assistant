@@ -224,7 +224,7 @@ window.__ModuleLoader__.load({
         commentEmpty: '评论不能为空', commentDone: '评论已发送',
         closeIssue: '关闭议题', reopenIssue: '重新打开', issueClosedOk: '议题已关闭', issueReopenedOk: '议题已重新打开',
         issueStateOpen: '开启', issueStateClosed: '已关闭',
-        branchInWorktree: '已在 {name} 工作树检出',
+        branchInWorktree: '占用：{name}',
         branchInWorktreeHint: '该分支已在「{name}」工作树中检出；同一个分支不能同时在两个工作树里检出',
         switchBranchHere: '切换此工作树的分支', worktreeBranches: '工作树分支',
         switchedWorktree: '已把「{worktree}」切到 {branch}',
@@ -317,7 +317,7 @@ window.__ModuleLoader__.load({
         commentEmpty: 'Comment is empty', commentDone: 'Comment posted',
         closeIssue: 'Close issue', reopenIssue: 'Reopen', issueClosedOk: 'Issue closed', issueReopenedOk: 'Issue reopened',
         issueStateOpen: 'Open', issueStateClosed: 'Closed',
-        branchInWorktree: 'checked out in {name}',
+        branchInWorktree: 'held by {name}',
         branchInWorktreeHint: 'This branch is already checked out in the "{name}" worktree; git allows it in only one worktree at a time',
         switchBranchHere: 'Switch this worktree branch', worktreeBranches: 'Worktree branches',
         switchedWorktree: 'Switched "{worktree}" to {branch}',
@@ -1060,7 +1060,7 @@ window.__ModuleLoader__.load({
                       h('span', { style: { flex: 1 } }),
                       blocked
                         ? h('span', {
-                            style: { fontSize: 9.5, whiteSpace: 'nowrap', color: T.muted, background: T.chip, borderRadius: T.pill, padding: '1px 7px' },
+                            style: { fontSize: 9.5, whiteSpace: 'nowrap', color: T.muted, background: T.chip, borderRadius: T.pill, padding: '1px 7px', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' },
                           }, t('branchInWorktree', { name: branch.worktreeName ?? basename(branch.worktree) }))
                         : null)
                   }))
@@ -3937,7 +3937,7 @@ window.__ModuleLoader__.load({
               h(Chevron, { open: branchMenuOpen, size: 8 })),
             branchMenuOpen ? h('div', {
               style: {
-                position: 'absolute', top: '100%', left: 0, marginTop: 8, zIndex: 40, width: 330,
+                position: 'absolute', top: '100%', left: 0, marginTop: 8, zIndex: 40, width: 360,
                 maxHeight: 380, overflowY: 'auto', background: T.menu, border: `0.5px solid ${T.border}`,
                 borderRadius: T.rLg, padding: 6, boxShadow: T.shadowProminent,
                 backdropFilter: 'blur(28px) saturate(170%)',
@@ -3976,6 +3976,7 @@ window.__ModuleLoader__.load({
                         style: {
                           display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9.5, whiteSpace: 'nowrap',
                           color: T.muted, background: T.chip, borderRadius: T.pill, padding: '1px 7px', flex: '0 0 auto',
+                          maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis',
                         },
                       }, t('branchInWorktree', { name: branch.worktreeName ?? basename(branch.worktree) }))
                     : branch.upstream ? h('span', { style: { fontSize: 9.5, opacity: 0.35, fontFamily: MONO } }, branch.upstream) : null)
