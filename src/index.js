@@ -11,7 +11,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs'
+import { realpathSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, statSync, watch } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 
@@ -232,6 +232,11 @@ function parseWorktrees(raw) {
   return list.filter(item => item.path)
 }
 
+/** Resolve symlinks when possible so paths from git (e.g. /private/var) compare with user paths. */
+function canonicalPath(value) {
+  try { return realpathSync(value) } catch { return resolve(value) }
+}
+
 function unquotePath(value) {
   if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
     try { return JSON.parse(value) } catch { return value.slice(1, -1) }
@@ -398,12 +403,43 @@ async function statusOf(repoPath) {
   return status
 }
 
+/** Branches of one checkout, annotated with the worktree that holds each of them (git allows one). */
 async function branchesOf(repoPath) {
-  const raw = await gitOk(repoPath, ['for-each-ref', '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)', 'refs/heads']) ?? ''
-  return raw.split('\n').filter(Boolean).map(line => {
+  const [raw, worktreeRaw] = await Promise.all([
+    gitOk(repoPath, ['for-each-ref', '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)', 'refs/heads']),
+    gitOk(repoPath, ['worktree', 'list', '--porcelain']),
+  ])
+  const self = canonicalPath(repoPath)
+  const holders = new Map()
+  for (const worktree of parseWorktrees(worktreeRaw ?? '')) {
+    if (!worktree.branch || worktree.bare || worktree.prunable) continue
+    if (canonicalPath(worktree.path) === self) continue
+    holders.set(worktree.branch, worktree.path)
+  }
+  return (raw ?? '').split('\n').filter(Boolean).map(line => {
     const [name, head, upstream] = line.split('\t')
-    return { name, current: head === '*', upstream: upstream || undefined }
+    const worktree = holders.get(name)
+    return {
+      name,
+      current: head === '*',
+      upstream: upstream || undefined,
+      worktree: worktree ?? null,
+      worktreeName: worktree ? basename(worktree) : undefined,
+    }
   })
+}
+
+/** The path of a worktree that already has `branch` checked out, ignoring `repoPath` itself. */
+async function branchHolderOf(repoPath, branch) {
+  const raw = await gitOk(repoPath, ['worktree', 'list', '--porcelain'])
+  const self = canonicalPath(repoPath)
+  for (const worktree of parseWorktrees(raw ?? '')) {
+    if (worktree.bare) continue
+    if (worktree.branch !== branch) continue
+    if (canonicalPath(worktree.path) === self) continue
+    return worktree.path
+  }
+  return undefined
 }
 
 function listDirectory(root, dir) {
@@ -1289,6 +1325,14 @@ async function commitFiles(repoPath, message, action = 'commit') {
 
 async function switchBranch(repoPath, branch) {
   if (typeof branch !== 'string' || branch.length === 0 || branch.startsWith('-')) throw new Error('invalid branch name')
+  // A branch can only be checked out in one worktree; report the holder instead of leasing git's fatal text.
+  const holder = await branchHolderOf(repoPath, branch)
+  if (holder) {
+    const error = new Error(`branch '${branch}' is already checked out in another worktree: ${holder}`)
+    error.code = 'branch-in-worktree'
+    error.worktree = holder
+    throw error
+  }
   await requireSuccess(repoPath, ['switch', branch])
 }
 
@@ -1759,7 +1803,16 @@ export function apply(ctx) {
             return
           }
           if (route === '/switch') {
-            await switchBranch(checkout.path, body.branch)
+            try {
+              await switchBranch(checkout.path, body.branch)
+            } catch (error) {
+              json(res, error?.code === 'branch-in-worktree' ? 409 : 400, {
+                error: error instanceof Error ? error.message : String(error),
+                code: error?.code,
+                worktree: error?.worktree,
+              })
+              return
+            }
             clearDiffCache(checkout.path)
             clearWorktreesCache(checkout.path)
             json(res, 200, { ok: true })
@@ -1793,4 +1846,5 @@ export const internals = {
   clearDiffCache, diffCacheSize: () => diffCache.size,
   stageFiles, unstageFiles, discardFiles, commitFiles, switchBranch, createBranch,
   stashesOf, stashPush, stashPop, fileHistoryOf, issueCommentAdd, issueSetState, touchIssueStore,
+  branchesOf, branchHolderOf,
 }

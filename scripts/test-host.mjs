@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { internals } from '../src/index.js'
@@ -183,6 +183,38 @@ test('issue write helpers validate their inputs and translate gh failures', asyn
     await assert.rejects(() => internals.issueCommentAdd(repo, 1, '   '), /comment body is empty/)
     await assert.rejects(() => internals.issueSetState(repo, 1, 'frozen'), /invalid issue state/)
   } finally {
+    dropRepo(repo)
+  }
+})
+
+test('branchesOf reports the worktree holding each branch and switchBranch refuses a held branch', async () => {
+  const repo = makeRepo()
+  const worktree = `${repo}-wt`
+  const initialBranch = git(repo, ['branch', '--show-current']).trim()
+  try {
+    git(repo, ['branch', 'feature/held'])
+    git(repo, ['worktree', 'add', '-q', worktree, 'feature/held'])
+
+    const branches = await internals.branchesOf(repo)
+    const held = branches.find(branch => branch.name === 'feature/held')
+    const current = branches.find(branch => branch.current)
+    assert.equal(held.current, false)
+    assert.equal(realpathSync(held.worktree), realpathSync(worktree))
+    assert.equal(held.worktreeName, worktree.split('/').pop())
+    assert.equal(current.name, initialBranch)
+    assert.equal(current.worktree, null)
+
+    const holder = await internals.branchHolderOf(repo, 'feature/held')
+    assert.equal(realpathSync(holder), realpathSync(worktree))
+
+    await assert.rejects(
+      () => internals.switchBranch(repo, 'feature/held'),
+      error => error.code === 'branch-in-worktree' && realpathSync(error.worktree) === realpathSync(worktree),
+    )
+    assert.equal(git(repo, ['branch', '--show-current']).trim(), initialBranch)
+  } finally {
+    try { git(repo, ['worktree', 'remove', '--force', worktree]) } catch { /* ignore */ }
+    dropRepo(worktree)
     dropRepo(repo)
   }
 })

@@ -224,6 +224,10 @@ window.__ModuleLoader__.load({
         commentEmpty: '评论不能为空', commentDone: '评论已发送',
         closeIssue: '关闭议题', reopenIssue: '重新打开', issueClosedOk: '议题已关闭', issueReopenedOk: '议题已重新打开',
         issueStateOpen: '开启', issueStateClosed: '已关闭',
+        branchInWorktree: '已在 {name} 工作树检出',
+        branchInWorktreeHint: '该分支已在「{name}」工作树中检出；同一个分支不能同时在两个工作树里检出',
+        switchBranchHere: '切换此工作树的分支', worktreeBranches: '工作树分支',
+        switchedWorktree: '已把「{worktree}」切到 {branch}',
       },
       en: {
         label: 'Git', title: 'Git Workbench',
@@ -313,6 +317,10 @@ window.__ModuleLoader__.load({
         commentEmpty: 'Comment is empty', commentDone: 'Comment posted',
         closeIssue: 'Close issue', reopenIssue: 'Reopen', issueClosedOk: 'Issue closed', issueReopenedOk: 'Issue reopened',
         issueStateOpen: 'Open', issueStateClosed: 'Closed',
+        branchInWorktree: 'checked out in {name}',
+        branchInWorktreeHint: 'This branch is already checked out in the "{name}" worktree; git allows it in only one worktree at a time',
+        switchBranchHere: 'Switch this worktree branch', worktreeBranches: 'Worktree branches',
+        switchedWorktree: 'Switched "{worktree}" to {branch}',
       },
     }
 
@@ -405,8 +413,16 @@ window.__ModuleLoader__.load({
       }
       const response = await fetch(url, { headers: { accept: 'application/json' } })
       const body = await response.json().catch(() => undefined)
-      if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`)
+      if (!response.ok) throw apiError(body, response.status)
       return body
+    }
+
+    /** Preserve structured error fields so the UI can translate instead of echoing git's fatal text. */
+    function apiError(body, status) {
+      const error = new Error(body?.error ?? `HTTP ${status}`)
+      if (body?.code) error.code = body.code
+      if (body?.worktree) error.worktree = body.worktree
+      return error
     }
 
     async function apiPost(path, body) {
@@ -416,7 +432,7 @@ window.__ModuleLoader__.load({
         body: JSON.stringify(body ?? {}),
       })
       const payload = await response.json().catch(() => undefined)
-      if (!response.ok) throw new Error(payload?.error ?? `HTTP ${response.status}`)
+      if (!response.ok) throw apiError(payload, response.status)
       return payload
     }
 
@@ -876,7 +892,7 @@ window.__ModuleLoader__.load({
     }
 
     /** One worktree is one complete operable area: header, commit box, stash, staged/changed lists. */
-    function WorktreeCard({ t, item, defaultOpen, onOpen, onNotify, selectedPath, onChanged, onSelect, onDiscardAll, onFileHistory, visible = true }) {
+    function WorktreeCard({ t, item, defaultOpen, onOpen, onNotify, selectedPath, onChanged, onSelect, onDiscardAll, onFileHistory, onDialog, visible = true }) {
       const [open, setOpen] = useState(defaultOpen)
       const [status, refreshStatus] = useStatusAt(item.path, open && visible)
       const [busy, setBusy] = useState(false)
@@ -886,6 +902,7 @@ window.__ModuleLoader__.load({
       const [hoveredKey, setHoveredKey] = useState(undefined)
       const [stashes, setStashes] = useState({ phase: 'idle', items: [] })
       const [stashMenu, setStashMenu] = useState(null)
+      const [branchMenu, setBranchMenu] = useState(null)
       const [rowMenu, setRowMenu] = useState(null)
       const messageRef = useRef(null)
       const data = status.data
@@ -935,9 +952,12 @@ window.__ModuleLoader__.load({
         else next.add(path)
         return next
       })
+      const errorText = error => error?.code === 'branch-in-worktree'
+        ? t('branchInWorktreeHint', { name: basename(error.worktree ?? '') })
+        : String(error?.message ?? error)
       const runAction = async (work) => {
         setBusy(true)
-        try { await work() } catch (error) { onNotify?.(String(error?.message ?? error), 'error') }
+        try { await work() } catch (error) { onNotify?.(errorText(error), 'error') }
         finally { setBusy(false); refreshStatus() }
       }
       const optimisticStage = (files, staged) => {
@@ -977,6 +997,74 @@ window.__ModuleLoader__.load({
           onNotify?.(t('committed'))
         })
       }
+      const openBranchMenu = async event => {
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const at = { x: rect.left, y: rect.bottom + 4 }
+        setBranchMenu({ ...at, phase: 'loading', items: [] })
+        try {
+          const data = await api('/branches', { path: item.path })
+          setBranchMenu({ ...at, phase: 'ready', items: Array.isArray(data?.branches) ? data.branches : [] })
+        } catch (error) {
+          setBranchMenu({ ...at, phase: 'error', error: String(error?.message ?? error), items: [] })
+        }
+      }
+      const requestSwitchHere = branchName => {
+        setBranchMenu(null)
+        if (branchName === branchLabel) return
+        const go = () => runAction(async () => {
+          await apiPost('/switch', { path: item.path, branch: branchName })
+          onChanged?.()
+          onNotify?.(t('switchedWorktree', { worktree: displayName, branch: branchName }))
+        })
+        if (dirty) {
+          onDialog?.({
+            title: t('switchConfirmTitle'),
+            message: t('switchConfirm', { branch: branchName }),
+            confirmLabel: t('confirm'), cancelLabel: t('cancel'), danger: false,
+            onConfirm: go,
+          })
+        } else go()
+      }
+      const branchMenuElement = branchMenu
+        ? h(FloatingMenu, { key: 'branch-menu', at: branchMenu, width: 300, onClose: () => setBranchMenu(null) },
+            h('div', { style: { padding: '6px 9px 3px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: T.muted } }, t('worktreeBranches')),
+            branchMenu.phase === 'loading'
+              ? h('div', { style: { padding: '6px 10px', fontSize: 11.5, color: T.muted } }, t('loading'))
+              : branchMenu.phase === 'error'
+                ? h('div', { style: { padding: '6px 10px', fontSize: 11.5, color: T.error } }, branchMenu.error)
+                : branchMenu.items.map(branch => {
+                    const blocked = Boolean(branch.worktree)
+                    return h('button', {
+                      key: branch.name, type: 'button',
+                      onClick: () => {
+                        if (blocked) {
+                          setBranchMenu(null)
+                          onNotify?.(t('branchInWorktreeHint', { name: branch.worktreeName ?? basename(branch.worktree) }), 'info')
+                          return
+                        }
+                        requestSwitchHere(branch.name)
+                      },
+                      title: blocked ? t('branchInWorktreeHint', { name: branch.worktreeName ?? basename(branch.worktree) }) : branch.name,
+                      style: {
+                        appearance: 'none', border: 'none', background: branch.current ? T.selected : 'transparent',
+                        color: 'inherit', font: 'inherit', cursor: blocked ? 'default' : 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left',
+                        padding: '6px 9px', borderRadius: T.rSm, opacity: blocked ? 0.8 : 1,
+                      },
+                      onMouseEnter: event => { if (!branch.current) event.currentTarget.style.background = blocked ? T.chip : T.hover },
+                      onMouseLeave: event => { if (!branch.current) event.currentTarget.style.background = 'transparent' },
+                    },
+                      h('span', { style: { width: 12, fontSize: 11, opacity: branch.current ? 0.85 : 0.25 } }, '✓'),
+                      h('span', { style: { fontFamily: MONO, fontSize: 11.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, branch.name),
+                      h('span', { style: { flex: 1 } }),
+                      blocked
+                        ? h('span', {
+                            style: { fontSize: 9.5, whiteSpace: 'nowrap', color: T.muted, background: T.chip, borderRadius: T.pill, padding: '1px 7px' },
+                          }, t('branchInWorktree', { name: branch.worktreeName ?? basename(branch.worktree) }))
+                        : null)
+                  }))
+        : null
       const stashPushChanges = () => runAction(async () => {
         await apiPost('/stash-push', { path: item.path })
         loadStashes()
@@ -1099,6 +1187,7 @@ window.__ModuleLoader__.load({
       }, busy ? t('syncing') : `⟳ ${t('syncChanges')} ${behind}↓`) : null
       return [h('div', {
         key: 'card',
+        'data-worktree-path': item.path,
         style: {
           marginBottom: 8, borderRadius: T.rMd, background: T.surface, boxShadow: T.edge, overflow: 'hidden',
         },
@@ -1131,6 +1220,7 @@ window.__ModuleLoader__.load({
           }, t('mainWorktree')) : null,
           h('span', { style: { flex: 1 } }),
           h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
+          h(IconAction, { label: t('switchBranchHere'), onClick: openBranchMenu }, h(IconBranch)),
           stashes.items.length > 0 ? h('button', {
             type: 'button', title: t('stashChip'),
             onClick: event => {
@@ -1199,7 +1289,7 @@ window.__ModuleLoader__.load({
               : null) : null,
           status.phase === 'loading' ? h('div', { style: { fontSize: 11.5, color: T.muted, padding: '2px 0' } }, t('loading')) : null,
           status.phase === 'error' ? h('div', { style: { fontSize: 11.5, color: T.error, padding: '2px 0' } }, status.error) : null) : null),
-        rowMenuElement, stashMenuElement]
+        rowMenuElement, stashMenuElement, branchMenuElement]
     }
     /** Multi-file diff for one commit: file cards with collapse, wrap and per-file diff. */
     function CommitFileDiff({ context, entry, view, wrap, t }) {
@@ -2685,6 +2775,7 @@ window.__ModuleLoader__.load({
     const IconStash = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M4 8l2-4h12l2 4' }), h('path', { d: 'M4 8v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8' }), h('path', { d: 'M12 8v6' }), h('path', { d: 'M9.5 11.5L12 14l2.5-2.5' }))
     const IconCopy = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('rect', { x: 9, y: 9, width: 11, height: 12, rx: 2 }), h('path', { d: 'M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1' }))
     const IconFolder = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M3 7a1 1 0 0 1 1-1h5l2 2.5h8a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z' }))
+    const IconBranch = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('circle', { cx: 6, cy: 5, r: 2 }), h('circle', { cx: 6, cy: 19, r: 2 }), h('circle', { cx: 18, cy: 7, r: 2 }), h('path', { d: 'M6 7v10' }), h('path', { d: 'M18 9v1.5a4 4 0 0 1-4 4H9' }))
     const IconExternal = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M14 4h6v6' }), h('path', { d: 'M20 4L11 13' }), h('path', { d: 'M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5' }))
     const IconHistory = () => h('svg', { width: 12.5, height: 12.5, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M3.5 12a8.5 8.5 0 1 0 2.5-6' }), h('path', { d: 'M3 4v4h4' }), h('path', { d: 'M12 8v4.5l3 2' }))
     const IconMore = () => h('svg', { width: 13, height: 13, viewBox: '0 0 24 24', fill: 'currentColor', stroke: 'none' }, h('circle', { cx: 5, cy: 12, r: 1.7 }), h('circle', { cx: 12, cy: 12, r: 1.7 }), h('circle', { cx: 19, cy: 12, r: 1.7 }))
@@ -3395,6 +3486,16 @@ window.__ModuleLoader__.load({
       }, [toast])
 
       const notify = useCallback((text, kind = 'info') => setToast({ text, kind }), [])
+      /** Point at the card holding a branch: scroll it in and flash an outline for a moment. */
+      const flashWorktree = useCallback(path => {
+        if (!path || typeof document === 'undefined') return
+        const node = document.querySelector(`[data-worktree-path="${String(path).replace(/"/g, '\\"')}"]`)
+        if (!node) return
+        if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        node.style.outline = `2px solid ${T.accent}`
+        node.style.outlineOffset = '2px'
+        setTimeout(() => { node.style.outline = ''; node.style.outlineOffset = '' }, 1600)
+      }, [])
       useEffect(() => ensureSurfaceStyle(), [])
       const postIssueComment = useCallback(async body => {
         if (!active?.path || !issueNumber) throw new Error('no issue selected')
@@ -3447,7 +3548,9 @@ window.__ModuleLoader__.load({
           if (successText) notify(successText, 'ok')
           bump()
         } catch (error) {
-          notify(String(error?.message ?? error), 'error')
+          notify(error?.code === 'branch-in-worktree'
+            ? t('branchInWorktreeHint', { name: basename(error.worktree ?? '') })
+            : String(error?.message ?? error), 'error')
         } finally {
           setBusy(false)
         }
@@ -3507,6 +3610,7 @@ window.__ModuleLoader__.load({
           onSelect: path => setGraphPath(path),
           onOpen: (file, repoPath) => { setGraphPath(repoPath); setSelection({ kind: 'diff', path: file.path, staged: Boolean(file.__staged), repoPath }) },
           onFileHistory: (file, repoPath) => setFileHistory({ path: repoPath, file: file.path, phase: 'loading', commits: [], error: null }),
+          onDialog: setDialog,
         })))
       const openAll = useCallback(staged => { setSelection({ kind: 'all', staged: Boolean(staged) }) }, [])
       const discardAll = useCallback(() => discardPaths(changeFiles.map(file => file.path)), [discardPaths, changeFiles])
@@ -3768,7 +3872,7 @@ window.__ModuleLoader__.load({
           style: {
             display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, rowGap: 6, minHeight: 46,
             padding: '6px 12px', margin: '10px 12px 0', borderRadius: T.rMd, background: T.surface,
-            boxShadow: T.edge, flex: '0 0 auto', position: 'relative', zIndex: 2, minWidth: 0,
+            boxShadow: T.edge, flex: '0 0 auto', position: 'relative', zIndex: 60, minWidth: 0,
           },
         },
           h('span', { style: { display: 'inline-flex', color: T.ink2 } }, h(GitIcon, { size: 15 })),
@@ -3833,27 +3937,49 @@ window.__ModuleLoader__.load({
               h(Chevron, { open: branchMenuOpen, size: 8 })),
             branchMenuOpen ? h('div', {
               style: {
-                position: 'absolute', top: '100%', left: 0, marginTop: 8, zIndex: 40, width: 280,
+                position: 'absolute', top: '100%', left: 0, marginTop: 8, zIndex: 40, width: 330,
                 maxHeight: 380, overflowY: 'auto', background: T.menu, border: `0.5px solid ${T.border}`,
                 borderRadius: T.rLg, padding: 6, boxShadow: T.shadowProminent,
                 backdropFilter: 'blur(28px) saturate(170%)',
               },
             },
-              ...branches.items.map(branch => h('button', {
-                key: branch.name, type: 'button',
-                onClick: () => switchBranch(branch.name),
-                style: {
-                  appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: T.rSm,
-                  font: 'inherit', color: 'inherit', background: branch.current ? T.selected : 'transparent',
+              ...branches.items.map(branch => {
+                // The host reports a holder worktree for every branch checked out elsewhere; such a
+                // row can only point at that worktree, never run `git switch` here.
+                const blocked = Boolean(branch.worktree)
+                return h('button', {
+                  key: branch.name, type: 'button',
+                  onClick: () => {
+                    if (blocked) {
+                      setBranchMenuOpen(false)
+                      notify(t('branchInWorktreeHint', { name: branch.worktreeName ?? basename(branch.worktree) }), 'info')
+                      flashWorktree(branch.worktree)
+                      return
+                    }
+                    switchBranch(branch.name)
+                  },
+                  title: blocked ? t('branchInWorktreeHint', { name: branch.worktreeName ?? basename(branch.worktree) }) : branch.name,
+                  style: {
+                    appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: blocked ? 'default' : 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: T.rSm,
+                    font: 'inherit', color: 'inherit', background: branch.current ? T.selected : 'transparent',
+                    opacity: blocked ? 0.8 : 1,
+                  },
+                  onMouseEnter: event => { if (!branch.current) event.currentTarget.style.background = blocked ? T.chip : T.hover },
+                  onMouseLeave: event => { if (!branch.current) event.currentTarget.style.background = 'transparent' },
                 },
-                onMouseEnter: event => { if (!branch.current) event.currentTarget.style.background = T.hover },
-                onMouseLeave: event => { if (!branch.current) event.currentTarget.style.background = 'transparent' },
-              },
-                h('span', { style: { width: 12, fontSize: 11, opacity: branch.current ? 0.85 : 0.25 } }, '✓'),
-                h('span', { style: { fontSize: 12, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, branch.name),
-                h('span', { style: { flex: 1 } }),
-                branch.upstream ? h('span', { style: { fontSize: 9.5, opacity: 0.35, fontFamily: MONO } }, branch.upstream) : null)),
+                  h('span', { style: { width: 12, fontSize: 11, opacity: branch.current ? 0.85 : 0.25 } }, '✓'),
+                  h('span', { style: { fontSize: 12, fontFamily: MONO, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 } }, branch.name),
+                  h('span', { style: { flex: 1 } }),
+                  blocked
+                    ? h('span', {
+                        style: {
+                          display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9.5, whiteSpace: 'nowrap',
+                          color: T.muted, background: T.chip, borderRadius: T.pill, padding: '1px 7px', flex: '0 0 auto',
+                        },
+                      }, t('branchInWorktree', { name: branch.worktreeName ?? basename(branch.worktree) }))
+                    : branch.upstream ? h('span', { style: { fontSize: 9.5, opacity: 0.35, fontFamily: MONO } }, branch.upstream) : null)
+              }),
               h('div', { style: { display: 'flex', gap: 6, padding: '6px 8px 3px', borderTop: `1px solid ${T.borderSoft}`, marginTop: 4 } },
                 h('input', {
                   value: newBranch, placeholder: t('branchPlaceholder'),

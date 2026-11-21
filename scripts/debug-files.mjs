@@ -34,7 +34,11 @@ globalThis.fetch = async url => {
         : { entries: [{ name: 'src', path: 'src', kind: 'dir' }, { name: 'a.ts', path: 'a.ts', kind: 'file' }, { name: 'icon.svg', path: 'icon.svg', kind: 'file' }], truncated: false })
     : href.includes('/files') ? { files: ['a.ts', 'src/b.ts', 'images/logo.png', 'icon.svg'], total: 4, truncated: false }
     : href.includes('/file') ? { path: 'a.ts', content: 'hello', size: 5, binary: false }
-    : href.includes('/branches') ? { local: [], remote: [], detached: false }
+    : href.includes('/branches') ? { branches: [
+        { name: 'main', current: true, upstream: 'origin/main', worktree: null },
+        { name: 'feat/x', current: false, worktree: '/repo-wt', worktreeName: 'repo-wt' },
+        { name: 'free/branch', current: false, worktree: null },
+      ] }
     : href.includes('/issues') ? { repo: { owner: 'x', name: 'y' }, issues: [
         { number: 101, title: '父议题标题', state: 'open', labels: [{ name: 'bug', color: 'd73a4a' }], assignees: [], comments: 2, updatedAt: '2026-11-10T10:00:00Z', url: 'https://github.com/x/y/issues/101', parent: null, children: [{ number: 102, title: '子议题标题', state: 'open' }] },
         { number: 102, title: '子议题标题', state: 'open', labels: [], assignees: [], comments: 0, updatedAt: '2026-11-09T10:00:00Z', url: 'https://github.com/x/y/issues/102', parent: { number: 101, title: '父议题标题', state: 'open' }, children: [] },
@@ -244,6 +248,31 @@ if (issuesTabAgain) {
     await act(async () => { await new Promise(r => setTimeout(r, 300)) })
     console.log('STATE POSTED:', fetched.some(h => h.includes('/issue-state')), '| REOPEN BTN:', [...document.querySelectorAll('button')].some(b => b.textContent === translate('reopenIssue')))
   }
+}
+
+/* branch menu: a branch held by another worktree must never trigger a switch */
+const branchChip = [...document.querySelectorAll('button')].find(button => button.querySelector('svg') && button.textContent.includes(translate('detached')) === false && button.textContent.trim() === 'main')
+if (branchChip) {
+  await act(async () => { branchChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 100)) })
+  const heldRow = [...document.querySelectorAll('button')].find(button => button.textContent.includes('feat/x'))
+  console.log('BRANCH MENU:', Boolean(heldRow), '| HELD BADGE:', (document.body.textContent || '').includes(translate('branchInWorktree', { name: 'repo-wt' })))
+  if (heldRow) {
+    const before = fetched.filter(href => href.includes('/switch')).length
+    await act(async () => { heldRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 200)) })
+    const after = fetched.filter(href => href.includes('/switch')).length
+    console.log('HELD ROW BLOCKED:', before === after, '| HINT:', (document.body.textContent || '').includes('repo-wt'))
+    const card = document.querySelector('[data-worktree-path="/repo-wt"]')
+    console.log('WORKTREE CARD TAGGED:', Boolean(card), '| OUTLINE FLASH:', card ? card.style.outline.includes('solid') : false)
+  }
+}
+const switchHereBtn = [...document.querySelectorAll('button')].find(button => button.title === translate('switchBranchHere'))
+console.log('SWITCH-HERE BTN:', Boolean(switchHereBtn))
+if (switchHereBtn) {
+  await act(async () => { switchHereBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
+  await act(async () => { await new Promise(r => setTimeout(r, 150)) })
+  console.log('WORKTREE BRANCH MENU:', (document.body.textContent || '').includes(translate('worktreeBranches')), '| FREE BRANCH:', (document.body.textContent || '').includes('free/branch'))
 }
 
 console.log('BOUNDARY:', (document.getElementById('boundary')?.textContent || 'none').slice(0, 2000))

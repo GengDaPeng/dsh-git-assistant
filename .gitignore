@@ -16,3 +16,6 @@ plugin/dsh-superagent/node_modules/
 # Binary design references kept local
 research/assets/
 research/build-probe/logs/
+
+# DSH worktrees and local previews live here; never commit them
+.agents/
