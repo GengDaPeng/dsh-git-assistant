@@ -2441,7 +2441,6 @@ window.__ModuleLoader__.load({
         if (!dirs[path] || dirs[path].phase === 'error') loadDir(path)
         return next
       })
-      const rootEntries = dirs['']?.entries ?? []
       const rows = useMemo(() => {
       const rows = []
       const walk = (dirPath, depth) => {
@@ -2562,7 +2561,6 @@ window.__ModuleLoader__.load({
             }, item.branch) : null,
             h('span', { style: { flex: 1 } }),
             h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
-            h('span', { style: { fontSize: 10.5, color: T.subtle } }, dirs['']?.phase === 'ready' ? String(rootEntries.length) : ''),
             h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshFiles() } }, h(RefreshIcon, {}))),
           open ? h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '6px 4px 8px' } }, rows) : null))
     }
