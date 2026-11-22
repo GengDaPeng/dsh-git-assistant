@@ -220,6 +220,7 @@ window.__ModuleLoader__.load({
         moreFileActions: '更多操作', fileHistory: '文件历史', fileHistoryEmpty: '这个文件还没有提交记录',
         stashPush: '暂存到 stash', stashPop: '恢复到工作区', stashList: 'stash 列表', stashEmpty: '没有 stash',
         stashPushed: '已暂存到 stash', stashPopped: '已恢复 stash', stashChip: '查看 stash',
+        stashChipCount: '查看 stash 记录（{count} 条）',
         commentPlaceholder: '写下评论，Ctrl/⌘ + Enter 发送', commentSend: '发送评论', commentSending: '发送中…',
         commentEmpty: '评论不能为空', commentDone: '评论已发送',
         closeIssue: '关闭议题', reopenIssue: '重新打开', issueClosedOk: '议题已关闭', issueReopenedOk: '议题已重新打开',
@@ -313,6 +314,7 @@ window.__ModuleLoader__.load({
         moreFileActions: 'More actions', fileHistory: 'File history', fileHistoryEmpty: 'No commits touch this file yet',
         stashPush: 'Stash changes', stashPop: 'Pop stash', stashList: 'Stashes', stashEmpty: 'No stash entries',
         stashPushed: 'Changes stashed', stashPopped: 'Stash restored', stashChip: 'View stashes',
+        stashChipCount: 'View stash entries ({count})',
         commentPlaceholder: 'Write a comment (Ctrl/⌘ + Enter to send)', commentSend: 'Comment', commentSending: 'Sending…',
         commentEmpty: 'Comment is empty', commentDone: 'Comment posted',
         closeIssue: 'Close issue', reopenIssue: 'Reopen', issueClosedOk: 'Issue closed', issueReopenedOk: 'Issue reopened',
@@ -1224,16 +1226,27 @@ window.__ModuleLoader__.load({
           h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
           h(IconAction, { label: t('switchBranchHere'), onClick: openBranchMenu }, h(IconBranch)),
           stashes.items.length > 0 ? h('button', {
-            type: 'button', title: t('stashChip'),
+            type: 'button',
+            'aria-label': t('stashChipCount', { count: stashes.items.length }),
             onClick: event => {
               event.stopPropagation()
               const rect = event.currentTarget.getBoundingClientRect()
               setStashMenu({ x: rect.left, y: rect.bottom + 4 })
             },
+            onMouseEnter: event => {
+              event.currentTarget.style.background = T.surfaceHover
+              event.currentTarget.style.borderColor = T.border
+              showTooltip(t('stashChipCount', { count: stashes.items.length }), event.currentTarget)
+            },
+            onMouseLeave: event => {
+              event.currentTarget.style.background = T.surface
+              hideTooltip()
+            },
             style: {
               appearance: 'none', border: `1px solid ${T.border}`, background: T.surface, color: T.ink2,
               display: 'inline-flex', alignItems: 'center', gap: 3, height: 20, padding: '0 7px', borderRadius: T.pill,
               cursor: 'pointer', fontSize: 10, fontFamily: MONO,
+              transition: `background .15s ${T.ease}`,
             },
           }, h(IconStash), String(stashes.items.length)) : null,
           h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); refreshStatus(); loadStashes() } }, h(RefreshIcon, {}))),

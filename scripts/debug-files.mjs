@@ -171,9 +171,13 @@ if (issuesTab) {
     await act(async () => { await new Promise(r => setTimeout(r, 150)) })
     console.log('STASH PUSH POSTED:', fetched.some(h => h.includes('/stash-push')))
   }
-  const stashChip = [...document.querySelectorAll('button')].find(button => button.title === translate('stashChip'))
+  const stashChip = [...document.querySelectorAll('button')].find(button => (button.getAttribute('aria-label') || '').includes('stash'))
   console.log('STASH CHIP:', Boolean(stashChip))
   if (stashChip) {
+    await act(async () => { stashChip.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true })) })
+    await act(async () => { await new Promise(r => setTimeout(r, 60)) })
+    const tooltip = document.querySelector('[role="tooltip"]')
+    console.log('STASH CHIP TOOLTIP:', tooltip ? tooltip.textContent : null)
     await act(async () => { stashChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })) })
     await act(async () => { await new Promise(r => setTimeout(r, 100)) })
     console.log('STASH MENU:', document.body.textContent.includes('测试 stash'), '| POP BTN:', [...document.querySelectorAll('button')].some(b => b.title === translate('stashPop')))
