@@ -1,14 +1,36 @@
 {
   "name": "dsh-git-assistant",
   "version": "0.4.0",
-  "private": true,
-  "type": "module",
-  "description": "A calm, Zed-like Git workbench for DeepSeek Harness: repositories, worktrees, branches, changes, diffs and file browsing without leaving the conversation.",
+  "packageManager": "pnpm@11.1.1",
+  "description": "A calm, Zed-like Git workbench for DeepSeek Harness: repositories, worktrees, branches, changes, diffs, commit graph and GitHub issues — without leaving the conversation.",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "git",
+    "git-workbench",
+    "github-issues",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/GengDaPeng/dsh-git-assistant#readme",
+  "bugs": {
+    "url": "https://github.com/GengDaPeng/dsh-git-assistant/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GengDaPeng/dsh-git-assistant.git"
+  },
   "license": "MIT",
-  "main": "src/index.js",
+  "type": "module",
+  "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js",
-    "./client": "./src/client.js",
+    ".": {
+      "default": "./src/index.js"
+    },
+    "./client": {
+      "default": "./src/client.js"
+    },
     "./icon.svg": "./icon.svg",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
@@ -18,10 +40,18 @@
     "cordis.patch.yml",
     "locale",
     "icon.svg",
-    "README.md",
     "LICENSE",
+    "README.md",
     "CHANGELOG.md"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node scripts/smoke-client.mjs",
+    "test:host": "node --test scripts/test-host.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -50,9 +80,5 @@
     "jsdom": "^25.0.1",
     "react": "18.3.1",
     "react-dom": "18.3.1"
-  },
-  "scripts": {
-    "smoke": "node scripts/smoke-client.mjs",
-    "test:host": "node --test scripts/test-host.mjs"
   }
 }

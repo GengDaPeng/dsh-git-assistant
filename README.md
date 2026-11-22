@@ -8,19 +8,34 @@
 
 ## 安装
 
-本项目以 **DSH 插件包（bundle）** 的形式分发，尚未发布到 npm。
+### 方式一：一行命令（推荐）
 
-1. 克隆仓库到任意本地目录：
+```sh
+dsh plugin --profile web add dsh-git-assistant
+```
 
-   ```bash
-   git clone https://github.com/GengDaPeng/dsh-git-assistant.git
-   ```
+装完即自动注册，无需任何额外配置。
 
-2. 在 DeepSeek Harness 中打开「插件」面板 →「添加插件」，选择该目录（安装本地 bundle）。
+兼容范围：Node.js `^22.19.0 || >=24.0.0`、DeepSeek Harness `^0.2.2-rc.1`。已对 Node.js 24 与 Harness 0.2.2-rc.1 做真机验证。
 
-3. 安装后左侧栏出现 **Git** 图标；会话顶部标签与右侧栏也可以打开 Git 视图。
+### 方式二：从 GitHub 安装
 
-环境要求：DSH `^0.2.2-rc.1`、Node.js `^22.19.0` 或 `>=24.0.0`、本机 `git`；议题功能另需本机已登录的 `gh`。
+```sh
+dsh plugin --profile web add github:GengDaPeng/dsh-git-assistant
+```
+
+### 方式三：本地目录安装
+
+克隆仓库到任意本地目录，然后在 DeepSeek Harness 中打开「插件」面板 →「添加插件」，选择该目录。
+
+### 装完自动发生了什么
+
+插件自带 `cordis.patch.yml`（由 `package.json` 的 `dsh.bundle.patch` 指向），安装后自动把自己挂进宿主组合——所以你**不需要**手动改 preset、改 `cordis.patch.yml`。左侧栏出现 **Git** 图标，会话顶部标签与右侧栏也可以打开 Git 视图。
+
+### 环境要求
+
+- 本机 `git`（所有 Git 操作）
+- 议题功能另需本机已登录的 `gh`（GitHub CLI）
 
 ## 功能
 
@@ -112,7 +127,7 @@
 
 ## 开发状态
 
-v0.4.0 起作为正式版本对外发布。后续计划：发布 npm 包以便一键安装、议题标签管理等更多写操作、议题与 PR 的深度联动，以及更完整的文档与截图。
+v0.4.0 起作为正式版本对外发布，npm 包随 GitHub Release 自动发布。后续计划：议题标签管理等更多写操作、议题与 PR 的深度联动，以及更完整的文档与截图。
 
 ## 许可
 
