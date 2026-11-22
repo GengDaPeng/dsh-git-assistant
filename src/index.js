@@ -18,6 +18,9 @@ import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 export const name = 'dsh-git-assistant'
 export const inject = ['webServer', 'workspaceRegistry', 'sessionController', 'sessionPersistence']
 
+const PACKAGE_MANIFEST = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const PLUGIN_VERSION = typeof PACKAGE_MANIFEST.version === 'string' ? PACKAGE_MANIFEST.version : '0.0.0'
+
 const PREFIX = '/git-assistant/api'
 const GIT_TIMEOUT_MS = 20000
 const GIT_MAX_BUFFER = 8 * 1024 * 1024
@@ -1487,7 +1490,7 @@ export function apply(ctx) {
           return
         }
         if (req.method === 'GET' && route === '/ping') {
-          json(res, 200, { ok: true, version: '0.3.0' })
+          json(res, 200, { ok: true, version: PLUGIN_VERSION })
           return
         }
         if (req.method === 'GET' && route === '/repositories') {
