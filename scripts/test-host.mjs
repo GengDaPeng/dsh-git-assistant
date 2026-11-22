@@ -179,7 +179,9 @@ test('issue write helpers validate their inputs and translate gh failures', asyn
   const repo = makeRepo()
   try {
     git(repo, ['remote', 'add', 'origin', 'git@github.com:example/nope.git'])
-    await assert.rejects(() => internals.issueCommentAdd(repo, 0, 'x'), /invalid issue number|no such issue|404|Not Found/i)
+    // CI 没有 gh 凭据：gh 会先报 GH_TOKEN；本机登录时才报 404。两类都算「翻译成功」。
+    const ghFailure = /invalid issue number|no such issue|404|Not Found|GH_TOKEN/i
+    await assert.rejects(() => internals.issueCommentAdd(repo, 0, 'x'), ghFailure)
     await assert.rejects(() => internals.issueCommentAdd(repo, 1, '   '), /comment body is empty/)
     await assert.rejects(() => internals.issueSetState(repo, 1, 'frozen'), /invalid issue state/)
   } finally {
