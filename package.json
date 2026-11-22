@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-assistant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "A calm, Zed-like Git workbench for DeepSeek Harness: repositories, worktrees, branches, changes, diffs and file browsing without leaving the conversation.",
@@ -19,7 +19,8 @@
     "locale",
     "icon.svg",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "dsh": {
     "bundle": {
