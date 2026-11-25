@@ -3447,13 +3447,18 @@ window.__ModuleLoader__.load({
         } catch { return undefined }
       }, [ctx, sessionId])
       const sessionWorktree = useSessionWorktree(ctx, sessionId, dataVersion)
+      // Manual pick inside this panel instance wins over all defaults, until the session changes.
+      const [manualId, setManualId] = useState(undefined)
+      useEffect(() => { setManualId(undefined) }, [sessionId])
 
       const preferredId = useMemo(() => {
         const items = repositories.items
         if (items.length === 0) return undefined
-        // In a session, the worktree that Session entered wins — returning to the session restores
-        // its own worktree even after browsing others. Only the sessionless main panel keeps the
-        // global stored choice, and the session cwd match is the last resort.
+        // A manual pick always wins — the user drove it. Otherwise, inside a session, the worktree
+        // that Session entered wins — returning to the session restores its own worktree even after
+        // browsing others. The sessionless main panel keeps the global stored choice, and the
+        // session cwd match is the last resort.
+        if (manualId && items.some(item => item.id === manualId)) return manualId
         if (sessionId && sessionWorktree.worktree) {
           const associated = items.find(item => item.path === sessionWorktree.worktree.path)
           if (associated) return associated.id
@@ -3464,7 +3469,7 @@ window.__ModuleLoader__.load({
           if (match) return match.id
         }
         return items[0].id
-      }, [repositories.items, storedId, sessionCwd, sessionWorktree.worktree, sessionId])
+      }, [repositories.items, storedId, sessionCwd, sessionWorktree.worktree, sessionId, manualId])
       const active = useMemo(() => repositories.items.find(item => item.id === preferredId), [repositories.items, preferredId])
       useRepoEvents(active?.path, useCallback(() => {
         if (active?.path) refreshStatusPath(active.path)
@@ -3967,7 +3972,7 @@ window.__ModuleLoader__.load({
               },
             }, ...repositoryChoices.map(repository => h('button', {
               key: repository.repoName, type: 'button',
-              onClick: () => { setStoredId(repository.id); setMenuOpen(false) },
+              onClick: () => { setStoredId(repository.id); setManualId(repository.id); setMenuOpen(false) },
               style: {
                 appearance: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer',
                 display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', borderRadius: T.rSm,
