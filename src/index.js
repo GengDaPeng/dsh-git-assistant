@@ -1394,6 +1394,32 @@ async function fileHistoryOf(repoPath, file, limit = 40) {
   return { file, commits }
 }
 
+/**
+ * The worktree a Session currently associates with, per DSH's own worktree plugin: its
+ * `plugin:worktree/created` records carry the checkout it entered. The last record wins, so a
+ * Session that moved through several worktrees resolves to the one it most recently entered.
+ */
+async function sessionWorktreeOf(ctx, sessionId) {
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+  try {
+    const handle = await ctx.sessionPersistence.open(sessionId, 'read')
+    let events
+    try { events = (await handle.read()).events } finally { await handle.close() }
+    for (const event of (events ?? []).slice().reverse()) {
+      if (event?.type !== 'plugin:worktree/created') continue
+      const path = event?.data?.path
+      if (typeof path !== 'string' || path.length === 0) continue
+      return {
+        path,
+        branch: typeof event?.data?.branch === 'string' ? event.data.branch : undefined,
+        repositoryRoot: typeof event?.data?.repositoryRoot === 'string' ? event.data.repositoryRoot : undefined,
+        createdAt: event?.createdAt ?? event?.time ?? null,
+      }
+    }
+  } catch { /* unknown session or unreadable log: no association */ }
+  return null
+}
+
 /* ── minimal chat bridge (B-route proof) ─────────────────────────────── */
 
 /** Read the durable event log of one Session and reduce it to text messages. */
@@ -1670,6 +1696,16 @@ export function apply(ctx) {
           json(res, 200, await cachedWorktreesOf(checkout.path))
           return
         }
+        if (req.method === 'GET' && route === '/session-worktree') {
+          const sessionId = url.searchParams.get('sessionId')
+          if (!sessionId) { json(res, 400, { error: 'missing sessionId' }); return }
+          try {
+            json(res, 200, { worktree: await sessionWorktreeOf(ctx, sessionId) })
+          } catch (error) {
+            json(res, 200, { worktree: null })
+          }
+          return
+        }
         if (req.method === 'GET' && route === '/chat/history') {
           const sessionId = url.searchParams.get('sessionId')
           if (!sessionId) { json(res, 400, { error: 'missing sessionId' }); return }
@@ -1850,5 +1886,5 @@ export const internals = {
   clearDiffCache, diffCacheSize: () => diffCache.size,
   stageFiles, unstageFiles, discardFiles, commitFiles, switchBranch, createBranch,
   stashesOf, stashPush, stashPop, fileHistoryOf, issueCommentAdd, issueSetState, touchIssueStore,
-  branchesOf, branchHolderOf,
+  branchesOf, branchHolderOf, sessionWorktreeOf,
 }

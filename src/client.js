@@ -693,6 +693,20 @@ window.__ModuleLoader__.load({
 
     /* ── data hooks ─────────────────────────────────────────────────── */
 
+    /** Resolve the worktree the given Session most recently entered (DSH worktree plugin records). */
+    function useSessionWorktree(ctx, sessionId, version) {
+      const [state, setState] = useState({ phase: 'idle', worktree: null })
+      useEffect(() => {
+        if (!ctx || !sessionId) { setState({ phase: 'idle', worktree: null }); return undefined }
+        let live = true
+        api('/session-worktree', { sessionId })
+          .then(data => { if (live) setState({ phase: 'ready', worktree: data?.worktree ?? null }) })
+          .catch(() => { if (live) setState({ phase: 'ready', worktree: null }) })
+        return () => { live = false }
+      }, [ctx, sessionId, version])
+      return state
+    }
+
     function useRepositories() {
       const [state, setState] = useState({ phase: 'loading', items: [], error: null })
       const [version, setVersion] = useState(0)
@@ -1208,12 +1222,12 @@ window.__ModuleLoader__.load({
           onMouseLeave: event => { event.currentTarget.style.background = open ? T.surfaceAlt : T.surface },
         },
           h(Chevron, { open, size: 9 }),
-          h('span', { title: item.path, style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 72, flex: '0 1 auto' } }, displayName),
+          h('span', { title: item.path, style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 40, flex: '0 2 auto' } }, displayName),
           branchLabel !== displayName ? h('span', {
             title: branchLabel,
             style: {
               fontFamily: MONO, fontSize: 10.5, color: T.ink2, background: T.chip, borderRadius: 5,
-              padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 104, flex: '0 2 auto', overflow: 'hidden', textOverflow: 'ellipsis',
+              padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 210, flex: '0 1 auto', overflow: 'hidden', textOverflow: 'ellipsis',
             },
           }, branchLabel) : null,
           item.isMain ? h('span', {
@@ -2568,9 +2582,9 @@ window.__ModuleLoader__.load({
             onMouseLeave: event => { event.currentTarget.style.background = open ? T.surfaceAlt : T.surface },
           },
             h(Chevron, { open, size: 9 }),
-            h('span', { title: item.path, style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 72, flex: '0 1 auto' } }, item.name ?? item.path.split('/').pop()),
+            h('span', { title: item.path, style: { fontSize: 12.5, fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 40, flex: '0 2 auto' } }, item.name ?? item.path.split('/').pop()),
             item.branch ? h('span', {
-              style: { fontFamily: MONO, fontSize: 10.5, color: T.ink2, background: T.chip, borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 104, flex: '0 2 auto', overflow: 'hidden', textOverflow: 'ellipsis' },
+              style: { fontFamily: MONO, fontSize: 10.5, color: T.ink2, background: T.chip, borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 210, flex: '0 1 auto', overflow: 'hidden', textOverflow: 'ellipsis' },
             }, item.branch) : null,
             h('span', { style: { flex: 1 } }),
             h('span', { style: { fontFamily: MONO, fontSize: 10.5, color: T.muted, whiteSpace: 'nowrap' } }, `${item.behind > 0 ? `↓${item.behind}` : ''}${item.ahead > 0 ? ` ↑${item.ahead}` : ''}`),
@@ -3432,17 +3446,25 @@ window.__ModuleLoader__.load({
           return typeof row?.cwd === 'string' ? row.cwd : undefined
         } catch { return undefined }
       }, [ctx, sessionId])
+      const sessionWorktree = useSessionWorktree(ctx, sessionId, dataVersion)
 
       const preferredId = useMemo(() => {
         const items = repositories.items
         if (items.length === 0) return undefined
-        if (storedId && items.some(item => item.id === storedId)) return storedId
+        // In a session, the worktree that Session entered wins — returning to the session restores
+        // its own worktree even after browsing others. Only the sessionless main panel keeps the
+        // global stored choice, and the session cwd match is the last resort.
+        if (sessionId && sessionWorktree.worktree) {
+          const associated = items.find(item => item.path === sessionWorktree.worktree.path)
+          if (associated) return associated.id
+        }
+        if (!sessionId && storedId && items.some(item => item.id === storedId)) return storedId
         if (sessionCwd) {
           const match = items.find(item => item.path === sessionCwd || sessionCwd.startsWith(item.path + '/'))
           if (match) return match.id
         }
         return items[0].id
-      }, [repositories.items, storedId, sessionCwd])
+      }, [repositories.items, storedId, sessionCwd, sessionWorktree.worktree, sessionId])
       const active = useMemo(() => repositories.items.find(item => item.id === preferredId), [repositories.items, preferredId])
       useRepoEvents(active?.path, useCallback(() => {
         if (active?.path) refreshStatusPath(active.path)
