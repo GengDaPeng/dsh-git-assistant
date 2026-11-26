@@ -202,6 +202,8 @@ window.__ModuleLoader__.load({
         graphOptions: '图形选项',
         commitScope: '提交范围',
         currentBranch: '当前分支',
+        graphBranchLabel: '分支',
+        graphAllRefsLabel: '所有引用',
         allRefs: '所有引用（含远端/标签）',
         fileDisplayMode: '提交文件展示方式',
         viewTree: '树形展示',
@@ -296,6 +298,8 @@ window.__ModuleLoader__.load({
         graphOptions: 'Graph options',
         commitScope: 'Commit scope',
         currentBranch: 'Current branch',
+        graphBranchLabel: 'branch',
+        graphAllRefsLabel: 'all refs',
         allRefs: 'All refs (remote + tags)',
         fileDisplayMode: 'Commit file display',
         viewTree: 'Tree view',
@@ -1868,7 +1872,7 @@ window.__ModuleLoader__.load({
     }
 
     /** Collapsible commit-graph drawer docked at the bottom of the workbench column. */
-    function GraphPanel({ t, repository, width, onOpenDiff }) {
+    function GraphPanel({ t, repository, branch, width, onOpenDiff }) {
       const [expanded, setExpanded] = useState(false)
       const [height, setHeight] = useState(472)
       const [state, setState] = useState({ phase: 'idle', commits: [], hasMore: true })
@@ -1965,6 +1969,15 @@ window.__ModuleLoader__.load({
       },
         h(Chevron, { open: expanded, size: 9 }),
         h('span', { style: { fontSize: 11.5, fontWeight: 600, color: T.ink2 } }, t('graphTitle')),
+        // The graph follows a worktree, and its scope menu switches between that worktree's branch
+        // and all refs — so the branch is the identity worth naming here, not the repository.
+        branch && scope === 'branch' ? h('span', {
+          title: branch,
+          style: {
+            fontFamily: MONO, fontSize: 10.5, color: T.ink2, background: T.chip, borderRadius: 5,
+            padding: '1px 6px', whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis',
+          },
+        }, branch) : scope === 'all' ? h('span', { style: { fontSize: 10.5, color: T.muted } }, t('graphAllRefsLabel')) : null,
         h('span', { style: { flex: 1 } }),
         expanded ? h(IconAction, { label: t('refresh'), onClick: event => { event.stopPropagation(); setVersion(value => value + 1) } }, h(RefreshIcon, {})) : null,
         expanded ? h('div', {
@@ -3653,9 +3666,12 @@ window.__ModuleLoader__.load({
       }, [changeFiles, run, t])
 
       const graphRepository = graphPath ? { path: graphPath } : active
+      const graphBranch = (graphPath
+        ? worktrees.items.find(item => item.path === graphPath)?.branch
+        : status.data?.branch) ?? active?.branch
       const graphDrawer = mode === 'changes'
         ? h(GraphPanel, {
-            t, repository: graphRepository, width: leftWidth,
+            t, repository: graphRepository, branch: graphBranch, width: leftWidth,
             onOpenDiff: (hash, path) => {
               if (!graphRepository?.path) return
               setSelection({ kind: 'commit-diff', repoPath: graphRepository.path, hash, path })
