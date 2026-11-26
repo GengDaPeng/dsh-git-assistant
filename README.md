@@ -1,10 +1,10 @@
 # dsh-git-assistant
 
-`v0.4.0` · DeepSeek Harness Git 工作台
+`v0.5.0` · DeepSeek Harness Git 工作台
 
 一个用在 [DeepSeek Harness](https://github.com/deepseek-ai) 里的 Git 工作台：把仓库、工作树、分支、改动、diff、提交图形和 GitHub 议题，收进左侧栏、会话顶部标签页和右侧栏，让你尽量不离开对话就能完成日常 Git 操作。
 
-> **状态：v0.4.0（正式发布）。** 从 v0.4.0 起正式对外发布，安装方式见下方「安装」，完整变更见 [CHANGELOG](CHANGELOG.md)。
+> **状态：v0.5.0（正式发布）。** 安装方式见下方「安装」，完整变更见 [CHANGELOG](CHANGELOG.md)。
 
 ## 安装
 
